@@ -1,5 +1,5 @@
 ---
-title: "Polygenic Inference Across Species"
+title: "Parallel Evolution Download & Prune MAF Alignment"
 author: "Alexander Okamoto"
 date: "6/21/2021"
 output: html_document
