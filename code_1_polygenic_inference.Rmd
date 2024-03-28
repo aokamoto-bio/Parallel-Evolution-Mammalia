@@ -1,0 +1,380 @@
+---
+title: "Polygenic Inference Across Species"
+author: "Alexander Okamoto"
+date: "6/21/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(engine = "bash", eval = FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=60))
+```
+# Step 1: Download and process 241 mammal alignment 
+Data used is from <https://cglgenomics.ucsc.edu/data/cactus/>, published in Zoonomia Consortium, *Nature*, 2020 and contains a genome alignment of 241 mammal species. 
+
+NOTE: run this script from scratch directory or it takes MUCH longer. 
+
+```{bash, eval = FALSE}
+#!/bin/bash
+#SBATCH -c 1                               # Request one core
+#SBATCH -t 1-06:00                         # Runtime in D-HH:MM format
+#SBATCH -p medium                           # Partition to run in
+#SBATCH --mem=500M                         # Memory total in MiB (for all cores)
+#SBATCH -o get_alignment.out                 # File to which STDOUT will be written, including job ID (%j)
+#SBATCH -e get_alignment.err                 # File to which STDERR will be written, including job ID (%j)
+
+wget -c http://cgl.gi.ucsc.edu/data/cactus/241-mammalian-2020v2.maf.gz
+```
+
+This created the object '241-mammalian-2020v2.maf.gz' which is 1.1T so should stay gzipped if possible. It took a little less than a day to download. 
+
+I had previously downloaded dbSNPS151 SNP lists for each chromosome and stored them in my home directory.
+
+The variants used in the UKBB database were downloaded and these variants extracted from the SNP bed file to convert to hg38:
+
+```{bash, eval = FALSE}
+#to get variants
+wget https://broad-ukb-sumstats-us-east-1.s3.amazonaws.com/round2/annotations/variants.tsv.bgz -O variants.tsv.bgz
+
+gunzip -c variants.tsv.bgz > variants.csv
+
+for chr in {1..22}; do gunzip -c hg38_SNPs_BEDs/bed_chr_${chr}.bed.gz | awk -vf="variants.tsv" 'BEGIN{while(getline < f) {rs[$6] = 1}} {if($4 in rs) {print $0}}' > filtered_bed_chr${chr}.bed; done
+
+#sort
+sort -k1,1 -k2,2 -n GWAS_SNPs_hg38.bed >> GWAS_SNPs_hg38_sorted.bed
+```
+
+
+##Step 2: Fast extraction of all regions with genome alignment
+Given the size of the Zoonomia alignment file, extracting specific SNPs using numerous if statements proved too slow so instead, for the first step any alignment containing a human SNP was extracted to reduce the search space substantially. This script took <5 days to run and produces a 108G output file "Alignment_GWAS_Filtered.txt" which contains all regions of the initial MAF alignment that overlap one of the UK Biobank SNPs. 
+
+```{python, eval = FALSE}
+###PYTHON SCRIPT
+#!/usr/bin/env python
+# coding: utf-8
+
+#import packages needed to run code
+#to handle gzipped files
+import gzip
+
+#make list of start info
+genome_start_dict = {}
+genome_rsid_dict = {}
+genome_len_dict = {}
+genome_index_dict = {}
+for i in range(1,23):
+    chrom = "chr" + str(i)
+    genome_start_dict[chrom]= []
+    genome_rsid_dict[chrom]= []
+    genome_len_dict[chrom] = []
+    genome_index_dict[chrom] = 0
+
+with open("/home/alo667/GWAS_SNPs_hg38_sorted.bed", "rt") as GWAS_bed:
+    for line in GWAS_bed:
+        line_split = line.strip().split("\t")
+        if line_split[0] in genome_start_dict.keys():
+            genome_start_dict[line_split[0]].append(int(line_split[1]))
+            genome_rsid_dict[line_split[0]].append(line_split[3])
+            
+#create dictionary of SNPS on each chrom
+for i in range(1,23):
+    chrom = "chr" + str(i)
+    genome_len_dict[chrom] = len(genome_rsid_dict[chrom])
+genome_start_dict
+
+print(genome_len_dict)
+
+output_file = "Alignment_GWAS_Filtered.txt"
+doprint = False
+
+with gzip.open("241-mammalian-2020v2.maf.gz", "rt") as input, open(output_file, "a") as output:
+    for line in input:
+        if line.startswith("a"): #check for a line
+            doprint = False
+        if line.startswith("s"): #check for s line
+            maf_vals = line.strip().split('\t') #separate lines based on tabs
+            split_maf_vals = maf_vals[1].split('.')
+            if (split_maf_vals[0] == 'Homo_sapiens') and (split_maf_vals[1] in genome_start_dict.keys()): #check for human segment and chromosome of interest
+                chrom = split_maf_vals[1] #store chromosome
+                start = int(maf_vals[2]) #store start position
+                end = start + int(maf_vals[3]) # store end position
+                while genome_start_dict[chrom][genome_index_dict[chrom]] < start and (genome_index_dict[chrom] + 1 < genome_len_dict[chrom]): #scroll through SNP index to find match
+                    genome_index_dict[chrom] = genome_index_dict[chrom] + 1
+                if genome_start_dict[chrom][genome_index_dict[chrom]] < end and (genome_index_dict[chrom] + 1 < genome_len_dict[chrom]): #if match found, lines should be printed
+                    genome_index_dict[chrom] = genome_index_dict[chrom] + 1
+                    doprint = True
+        if doprint:
+            output.write("\n"+"\t".join(maf_vals[1:7]))
+```                    
+
+###RUN Filter_GWAS_SNPs.py SCRIPT
+```{bash, eval = FALSE}
+#!/bin/bash
+#SBATCH -c 1                               # Request one core
+#SBATCH -t 14-00:00                         # Runtime in D-HH:MM format
+#SBATCH -p long                           # Partition to run in
+#SBATCH --mem=10G                         # Memory total in MiB (for all cores)
+#SBATCH -o run_Filter_GWAS_SNPs.out                 # File to which STDOUT will be written, including job ID (%j)
+#SBATCH -e run_Filter_GWAS_SNPs.err                 # File to which STDERR will be written, including job ID (%j)
+                                           # You can change the filenames given with -o and -e to any filenames you'd like
+# set up environment
+module load gcc
+module load python/3.7.4
+source mypythonfolder/myvirtualenv/bin/activate
+unset PYTHONPATH #necessary to use my version of pandas
+
+python3 Filter_GWAS_SNPs.py
+```
+
+##Save RSIDs as txt file for future use 
+```{python, eval = FALSE}
+#!/usr/bin/env python
+# coding: utf-8
+
+
+#make list of start info
+genome_rsid_list = list()
+genome_start_dict = {}
+
+for i in range(1,23):
+    chrom = "chr" + str(i)
+    genome_start_dict[chrom]= []
+
+with open("/home/alo667/GWAS_SNPs_hg38_sorted.bed", "rt") as GWAS_bed:
+    for line in GWAS_bed:
+        line_split = line.strip().split("\t")
+        if line_split[0] in genome_start_dict.keys():
+            genome_rsid_list.append(line_split[3])
+
+
+#write RS ID list
+genome_rsid_list_file = open('genome_rsid_list.txt', "w")
+for element in genome_rsid_list:
+    genome_rsid_list_file.write(str(element) + "\n")
+genome_rsid_list_file.close()
+```
+
+##Step 3: Subset out basepairs by species and SNP
+Initially, I tried a much more complicated code that would have gone straight from the reduced alignment to the final matrix but this proved to be too slow (>5 days). Instead, a simpler approach converted the alignment into 'long format' which works very well here because long format is easy to write from the reduced alignment. The output is of the format: (species, rsid, human chrom, basepair). The human chromosome info is not needed but was included in case we want to easily subset by chromosome. The resulting file, "GWAS_SNPS_Long_Format.tsv", took less than 12 hours to generate and is 59G. 
+
+```{python, eval = FALSE}
+###PYTHON SCRIPT
+
+#!/usr/bin/env python
+# coding: utf-8
+
+def get_bp(x, y):
+    try:
+        bp = x[y].lower()
+    except IndexError:
+        bp = 'x'
+    return bp
+
+#make list of start info
+genome_rsid_list = list()
+genome_start_dict = {}
+genome_rsid_dict = {}
+genome_len_dict = {}
+genome_index_dict = {}
+for i in range(1,23):
+    chrom = "chr" + str(i)
+    genome_start_dict[chrom]= []
+    genome_rsid_dict[chrom]= []
+    genome_len_dict[chrom] = []
+    genome_index_dict[chrom] = 0
+
+with open("/home/alo667/GWAS_SNPs_hg38_sorted.bed", "rt") as GWAS_bed:
+    for line in GWAS_bed:
+        line_split = line.strip().split("\t")
+        if line_split[0] in genome_start_dict.keys():
+            genome_start_dict[line_split[0]].append(int(line_split[1]))
+            genome_rsid_dict[line_split[0]].append(line_split[3])
+            genome_rsid_list.append(line_split[3])
+            
+#create dictionary of SNPS on each chrom
+for i in range(1,23):
+    chrom = "chr" + str(i)
+    genome_len_dict[chrom] = len(genome_rsid_dict[chrom])
+
+
+species_list = ['Acinonyx_jubatus','Acomys_cahirinus','Ailuropoda_melanoleuca','Ailurus_fulgens','Allactaga_bullata','Alouatta_palliata','Ammotragus_lervia','Anoura_caudifer','Antilocapra_americana','Aotus_nancymaae','Aplodontia_rufa','Artibeus_jamaicensis','Ateles_geoffroyi','Balaenoptera_acutorostrata','Balaenoptera_bonaerensis','Beatragus_hunteri','Bison_bison','Bos_indicus','Bos_mutus','Bos_taurus','Bubalus_bubalis','Callicebus_donacophilus','Callithrix_jacchus','Camelus_bactrianus','Camelus_dromedarius','Camelus_ferus','Canis_lupus','Canis_lupus_familiaris','Capra_aegagrus','Capra_hircus','Capromys_pilorides','Carollia_perspicillata','Castor_canadensis','Catagonus_wagneri','Cavia_aperea','Cavia_porcellus','Cavia_tschudii','Cebus_albifrons','Cebus_capucinus','Ceratotherium_simum','Ceratotherium_simum_cottoni','Cercocebus_atys','Cercopithecus_neglectus','Chaetophractus_vellerosus','Cheirogaleus_medius','Chinchilla_lanigera','Chlorocebus_sabaeus','Choloepus_didactylus','Choloepus_hoffmanni','Chrysochloris_asiatica','Colobus_angolensis','Condylura_cristata','Craseonycteris_thonglongyai','Cricetomys_gambianus','Cricetulus_griseus','Crocidura_indochinensis','Cryptoprocta_ferox','Ctenodactylus_gundi','Ctenomys_sociabilis','Cuniculus_paca','Dasyprocta_punctata','Dasypus_novemcinctus','Daubentonia_madagascariensis','Delphinapterus_leucas','Desmodus_rotundus','Dicerorhinus_sumatrensis','Diceros_bicornis','Dinomys_branickii','Dipodomys_ordii','Dipodomys_stephensi','Dolichotis_patagonum','Echinops_telfairi','Eidolon_helvum','Elaphurus_davidianus','Elephantulus_edwardii','Ellobius_lutescens','Ellobius_talpinus','Enhydra_lutris','Eptesicus_fuscus','Equus_asinus','Equus_caballus','Equus_przewalskii','Erinaceus_europaeus','Erythrocebus_patas','Eschrichtius_robustus','Eubalaena_japonica','Eulemur_flavifrons','Eulemur_fulvus','Felis_catus','Felis_nigripes','Fukomys_damarensis','Galeopterus_variegatus','Giraffa_tippelskirchi','Glis_glis','Gorilla_gorilla','Graphiurus_murinus','Helogale_parvula','Hemitragus_hylocrius','Heterocephalus_glaber','Heterohyrax_brucei','Hippopotamus_amphibius','Hipposideros_armiger','Hipposideros_galeritus','Homo_sapiens','Hyaena_hyaena','Hydrochoerus_hydrochaeris','Hystrix_cristata','Ictidomys_tridecemlineatus','Indri_indri','Inia_geoffrensis','Jaculus_jaculus','Kogia_breviceps','Lasiurus_borealis','Lemur_catta','Leptonychotes_weddellii','Lepus_americanus','Lipotes_vexillifer','Loxodonta_africana','Lycaon_pictus','Macaca_fascicularis','Macaca_mulatta','Macaca_nemestrina','Macroglossus_sobrinus','Mandrillus_leucophaeus','Manis_javanica','Manis_pentadactyla','Marmota_marmota','Megaderma_lyra','Mellivora_capensis','Meriones_unguiculatus','Mesocricetus_auratus','Mesoplodon_bidens','Microcebus_murinus','Microgale_talazaci','Micronycteris_hirsuta','Microtus_ochrogaster','Miniopterus_natalensis','Miniopterus_schreibersii','Mirounga_angustirostris','Mirza_coquereli','Monodon_monoceros','Mormoops_blainvillei','Moschus_moschiferus','Mungos_mungo','Murina_feae','Muscardinus_avellanarius','Mus_caroli','Mus_musculus','Mus_pahari','Mus_spretus','Mustela_putorius','Myocastor_coypus','Myotis_brandtii','Myotis_davidii','Myotis_lucifugus','Myotis_myotis','Myrmecophaga_tridactyla','Nannospalax_galili','Nasalis_larvatus','Neomonachus_schauinslandi','Neophocaena_asiaeorientalis','Noctilio_leporinus','Nomascus_leucogenys','Nycticebus_coucang','Ochotona_princeps','Octodon_degus','Odobenus_rosmarus','Odocoileus_virginianus','Okapia_johnstoni','Ondatra_zibethicus','Onychomys_torridus','Orcinus_orca','Orycteropus_afer','Oryctolagus_cuniculus','Otolemur_garnettii','Ovis_aries','Ovis_canadensis','Pan_paniscus','Panthera_onca','Panthera_pardus','Panthera_tigris','Pantholops_hodgsonii','Pan_troglodytes','Papio_anubis','Paradoxurus_hermaphroditus','Perognathus_longimembris','Peromyscus_maniculatus','Petromus_typicus','Phocoena_phocoena','Piliocolobus_tephrosceles','Pipistrellus_pipistrellus','Pithecia_pithecia','Platanista_gangetica','Pongo_abelii','Procavia_capensis','Propithecus_coquereli','Psammomys_obesus','Pteronotus_parnellii','Pteronura_brasiliensis','Pteropus_alecto','Pteropus_vampyrus','Puma_concolor','Pygathrix_nemaeus','Rangifer_tarandus','Rattus_norvegicus','Rhinolophus_sinicus','Rhinopithecus_bieti','Rhinopithecus_roxellana','Rousettus_aegyptiacus','Saguinus_imperator','Saiga_tatarica','Saimiri_boliviensis','Scalopus_aquaticus','Semnopithecus_entellus','Sigmodon_hispidus','Solenodon_paradoxus','Sorex_araneus','Spermophilus_dauricus','Spilogale_gracilis','Suricata_suricatta','Sus_scrofa','Tadarida_brasiliensis','Tamandua_tetradactyla','Tapirus_indicus','Tapirus_terrestris','Thryonomys_swinderianus','Tolypeutes_matacus','Tonatia_saurophila','Tragulus_javanicus','Trichechus_manatus','Tupaia_chinensis','Tupaia_tana','Tursiops_truncatus','Uropsilus_gracilis','Ursus_maritimus','Vicugna_pacos','Vulpes_lagopus','Xerus_inauris','Zalophus_californianus','Zapus_hudsonius','Ziphius_cavirostris']
+
+#create an empty 3D array to store nucleotides found for each species at each SNP
+rsid_len = len(genome_rsid_list)
+block_snps = []
+
+#open the full alignment
+with open("Alignment_GWAS_Filtered.txt", "rt") as maf_align, open("GWAS_SNPS_Long_Format.tsv", "w") as output:  
+    for line in maf_align:
+        maf_vals = line.strip().split('\t') #separate lines based on tabs
+        species = maf_vals[0].split('.')[0]
+        if (species == 'Homo_sapiens'): #check for human segment
+            block_snps = []
+            snp_pos = []
+            chrom = maf_vals[0].split('.')[1] #store chromosome number
+            #store start position
+            start = int(maf_vals[1]) 
+            #store end position
+            end = start + int(maf_vals[2]) 
+            #scroll through SNP index to find match
+            while (genome_start_dict[chrom][genome_index_dict[chrom]] < start) and (genome_index_dict[chrom] + 1 < len(genome_start_dict[chrom])):
+                genome_index_dict[chrom] = genome_index_dict[chrom] + 1
+                #for all SNPs matching the block, store positional info
+            if genome_start_dict[chrom][genome_index_dict[chrom]] >= start:
+                while (genome_start_dict[chrom][genome_index_dict[chrom]] <= end) and (genome_index_dict[chrom] + 1 < len(genome_start_dict[chrom])): 
+                    block_snps.append(genome_rsid_dict[chrom][genome_index_dict[chrom]])
+                    snp_pos.append((genome_start_dict[chrom][genome_index_dict[chrom]]-start)) #find position
+                    genome_index_dict[chrom] = genome_index_dict[chrom] + 1
+        for pos in range(len(block_snps)): #iterate over SNP positions
+            bp = get_bp(maf_vals[5], snp_pos[pos])
+            #write species, human chrom, SNP RSID, BP to output
+            output.write(species + "\t" + chrom + "\t" + block_snps[pos] + "\t" + bp + "\n")
+```
+
+#RUN long_GWAS_SNPs_extract.py SCRIPT
+```{bash, eval = FALSE}
+#!/bin/bash
+#SBATCH -c 1                               # Request one core
+#SBATCH -t 00-12:00                         # Runtime in D-HH:MM format
+#SBATCH -p short                           # Partition to run in
+#SBATCH --mem=10G                         # Memory total in MiB (for all cores)
+#SBATCH -o run_long_GWAS_SNPs_extract.out                 # File to which STDOUT will be written, including job ID (%j)
+#SBATCH -e run_long_GWAS_SNPs_extract.err                 # File to which STDERR will be written, including job ID (%j)
+                                           # You can change the filenames given with -o and -e to any filenames you'd like
+# set up environment
+module load gcc
+module load python/3.7.4
+source mypythonfolder/myvirtualenv/bin/activate
+unset PYTHONPATH #necessary to use my version of pandas
+
+python3 long_GWAS_SNPs_extract.py
+```
+
+##Step 4: Sort and filter unique rows 
+Since the previous script will generate duplicate rows since some species have multiple, identical alignments for each SNP, I wanted to remove those. To this end, the file was sorted and only unique rows were kept. This reduced the data from 59G to 55G and took 2<t<12 hours. 
+
+```{bash, eval = FALSE}
+#!/bin/bash
+#SBATCH -c 1                               # Request one core
+#SBATCH -t 00-12:00                         # Runtime in D-HH:MM format
+#SBATCH -p short                           # Partition to run in
+#SBATCH --mem=1G                         # Memory total in MiB (for all cores)
+#SBATCH -o unique_long_GWAS_SNPs.out                 # File to which STDOUT will be written, including job ID (%j)
+#SBATCH -e unique_long_GWAS_SNPs.err                 # File to which STDERR will be written, including job ID (%j)
+                                           # You can change the filenames given with -o and -e to any filenames you'd like
+# set up environment
+
+sort GWAS_SNPS_Long_Format.tsv | uniq > GWAS_SNPS_uniq.tsv
+```
+
+##Step 5: Create files for each real basepair
+Visual inspection of the previous result showed that the alignment included a few other symbols for bps (-, x, etc.) that are meaningless for our purposes. Therefore, I used awk to subset the rows that contained each basepair. This produced 4 files, each 12-13G large, for a total reduction from 55G to 50G. These commands were run in interactive mode and each took ~20 minutes to run. 
+
+```{bash, eval = FALSE}
+awk -F '\t' '{ if ( $4 == "a" ) print $0 }' GWAS_SNPS_uniq.tsv  > GWAS_SNPS_uniq_A.tsv
+awk -F '\t' '{ if ( $4 == "c" ) print $0 }' GWAS_SNPS_uniq.tsv  > GWAS_SNPS_uniq_C.tsv
+awk -F '\t' '{ if ( $4 == "g" ) print $0 }' GWAS_SNPS_uniq.tsv  > GWAS_SNPS_uniq_G.tsv
+awk -F '\t' '{ if ( $4 == "t" ) print $0 }' GWAS_SNPS_uniq.tsv  > GWAS_SNPS_uniq_T.tsv
+```
+
+##Step 6: combine long format files for each basepair into a tsv matrix. 
+Next, I needed to convert the long format data for each base pair into a single matrix. To do this,  I first created a dictionary with RSIDs as keys and a list of '-' for each species. Then, I read through the long format data for each bp and added any matches to the appropriate position. Since this approach was ordered, there were only a limited number of permutations making this computational straightforward and relatively quick.This step took <6 hours and the resulting tsv alignment "All_SNPs_matrix.tsv" is 5.9G. 
+
+```{r, eval = FALSE}
+###PYTHON SCRIPT
+#!/usr/bin/env python
+# coding: utf-8
+
+#read in list of species
+species_list = ['Acinonyx_jubatus','Acomys_cahirinus','Ailuropoda_melanoleuca','Ailurus_fulgens','Allactaga_bullata','Alouatta_palliata','Ammotragus_lervia','Anoura_caudifer','Antilocapra_americana','Aotus_nancymaae','Aplodontia_rufa','Artibeus_jamaicensis','Ateles_geoffroyi','Balaenoptera_acutorostrata','Balaenoptera_bonaerensis','Beatragus_hunteri','Bison_bison','Bos_indicus','Bos_mutus','Bos_taurus','Bubalus_bubalis','Callicebus_donacophilus','Callithrix_jacchus','Camelus_bactrianus','Camelus_dromedarius','Camelus_ferus','Canis_lupus','Canis_lupus_familiaris','Capra_aegagrus','Capra_hircus','Capromys_pilorides','Carollia_perspicillata','Castor_canadensis','Catagonus_wagneri','Cavia_aperea','Cavia_porcellus','Cavia_tschudii','Cebus_albifrons','Cebus_capucinus','Ceratotherium_simum','Ceratotherium_simum_cottoni','Cercocebus_atys','Cercopithecus_neglectus','Chaetophractus_vellerosus','Cheirogaleus_medius','Chinchilla_lanigera','Chlorocebus_sabaeus','Choloepus_didactylus','Choloepus_hoffmanni','Chrysochloris_asiatica','Colobus_angolensis','Condylura_cristata','Craseonycteris_thonglongyai','Cricetomys_gambianus','Cricetulus_griseus','Crocidura_indochinensis','Cryptoprocta_ferox','Ctenodactylus_gundi','Ctenomys_sociabilis','Cuniculus_paca','Dasyprocta_punctata','Dasypus_novemcinctus','Daubentonia_madagascariensis','Delphinapterus_leucas','Desmodus_rotundus','Dicerorhinus_sumatrensis','Diceros_bicornis','Dinomys_branickii','Dipodomys_ordii','Dipodomys_stephensi','Dolichotis_patagonum','Echinops_telfairi','Eidolon_helvum','Elaphurus_davidianus','Elephantulus_edwardii','Ellobius_lutescens','Ellobius_talpinus','Enhydra_lutris','Eptesicus_fuscus','Equus_asinus','Equus_caballus','Equus_przewalskii','Erinaceus_europaeus','Erythrocebus_patas','Eschrichtius_robustus','Eubalaena_japonica','Eulemur_flavifrons','Eulemur_fulvus','Felis_catus','Felis_nigripes','Fukomys_damarensis','Galeopterus_variegatus','Giraffa_tippelskirchi','Glis_glis','Gorilla_gorilla','Graphiurus_murinus','Helogale_parvula','Hemitragus_hylocrius','Heterocephalus_glaber','Heterohyrax_brucei','Hippopotamus_amphibius','Hipposideros_armiger','Hipposideros_galeritus','Homo_sapiens','Hyaena_hyaena','Hydrochoerus_hydrochaeris','Hystrix_cristata','Ictidomys_tridecemlineatus','Indri_indri','Inia_geoffrensis','Jaculus_jaculus','Kogia_breviceps','Lasiurus_borealis','Lemur_catta','Leptonychotes_weddellii','Lepus_americanus','Lipotes_vexillifer','Loxodonta_africana','Lycaon_pictus','Macaca_fascicularis','Macaca_mulatta','Macaca_nemestrina','Macroglossus_sobrinus','Mandrillus_leucophaeus','Manis_javanica','Manis_pentadactyla','Marmota_marmota','Megaderma_lyra','Mellivora_capensis','Meriones_unguiculatus','Mesocricetus_auratus','Mesoplodon_bidens','Microcebus_murinus','Microgale_talazaci','Micronycteris_hirsuta','Microtus_ochrogaster','Miniopterus_natalensis','Miniopterus_schreibersii','Mirounga_angustirostris','Mirza_coquereli','Monodon_monoceros','Mormoops_blainvillei','Moschus_moschiferus','Mungos_mungo','Murina_feae','Muscardinus_avellanarius','Mus_caroli','Mus_musculus','Mus_pahari','Mus_spretus','Mustela_putorius','Myocastor_coypus','Myotis_brandtii','Myotis_davidii','Myotis_lucifugus','Myotis_myotis','Myrmecophaga_tridactyla','Nannospalax_galili','Nasalis_larvatus','Neomonachus_schauinslandi','Neophocaena_asiaeorientalis','Noctilio_leporinus','Nomascus_leucogenys','Nycticebus_coucang','Ochotona_princeps','Octodon_degus','Odobenus_rosmarus','Odocoileus_virginianus','Okapia_johnstoni','Ondatra_zibethicus','Onychomys_torridus','Orcinus_orca','Orycteropus_afer','Oryctolagus_cuniculus','Otolemur_garnettii','Ovis_aries','Ovis_canadensis','Pan_paniscus','Panthera_onca','Panthera_pardus','Panthera_tigris','Pantholops_hodgsonii','Pan_troglodytes','Papio_anubis','Paradoxurus_hermaphroditus','Perognathus_longimembris','Peromyscus_maniculatus','Petromus_typicus','Phocoena_phocoena','Piliocolobus_tephrosceles','Pipistrellus_pipistrellus','Pithecia_pithecia','Platanista_gangetica','Pongo_abelii','Procavia_capensis','Propithecus_coquereli','Psammomys_obesus','Pteronotus_parnellii','Pteronura_brasiliensis','Pteropus_alecto','Pteropus_vampyrus','Puma_concolor','Pygathrix_nemaeus','Rangifer_tarandus','Rattus_norvegicus','Rhinolophus_sinicus','Rhinopithecus_bieti','Rhinopithecus_roxellana','Rousettus_aegyptiacus','Saguinus_imperator','Saiga_tatarica','Saimiri_boliviensis','Scalopus_aquaticus','Semnopithecus_entellus','Sigmodon_hispidus','Solenodon_paradoxus','Sorex_araneus','Spermophilus_dauricus','Spilogale_gracilis','Suricata_suricatta','Sus_scrofa','Tadarida_brasiliensis','Tamandua_tetradactyla','Tapirus_indicus','Tapirus_terrestris','Thryonomys_swinderianus','Tolypeutes_matacus','Tonatia_saurophila','Tragulus_javanicus','Trichechus_manatus','Tupaia_chinensis','Tupaia_tana','Tursiops_truncatus','Uropsilus_gracilis','Ursus_maritimus','Vicugna_pacos','Vulpes_lagopus','Xerus_inauris','Zalophus_californianus','Zapus_hudsonius','Ziphius_cavirostris']
+
+#read in rsid file 
+with open("genome_rsid_list.txt", "r") as all_rsid_file:
+    rsid_list = [line.rstrip() for line in all_rsid_file]
+
+#create dictionary to store values for each species/SNP
+a_dict = {} 
+for rsid in rsid_list:
+    a_dict[rsid] = ['-' for i in range(241)]
+    
+    
+with open("GWAS_SNPS_uniq_A.tsv", "r") as a_SNPs_file:
+    for line in a_SNPs_file:
+        sep_line = line.split('\t')
+        a_dict[sep_line[2]][species_list.index(sep_line[0])] = 'a'
+        
+#SAVE AS CSV
+with open ("A_SNPs_matrix.tsv", "w") as a_output_file:
+    for key, value in a_dict.items():
+        bps = '\t'.join(value)
+        #print(key, '\t', bps[0:10])
+        a_output_file.write(key + '\t' + bps + '\n')
+        
+with open("GWAS_SNPS_uniq_C.tsv", "r") as c_SNPs_file:
+    for line in c_SNPs_file:
+        sep_line = line.split('\t')
+        if (a_dict[sep_line[2]][species_list.index(sep_line[0])] == '-'):
+            a_dict[sep_line[2]][species_list.index(sep_line[0])] = 'c'
+        if (a_dict[sep_line[2]][species_list.index(sep_line[0])] == 'a'):
+            a_dict[sep_line[2]][species_list.index(sep_line[0])] = 'ac'
+
+with open("GWAS_SNPS_uniq_G.tsv", "r") as g_SNPs_file:
+    for line in g_SNPs_file:
+        sep_line = line.split('\t')
+        if (a_dict[sep_line[2]][species_list.index(sep_line[0])] == '-'):
+            a_dict[sep_line[2]][species_list.index(sep_line[0])] = 'g'
+        if (a_dict[sep_line[2]][species_list.index(sep_line[0])] == 'a'):
+            a_dict[sep_line[2]][species_list.index(sep_line[0])] = 'ag'
+        if (a_dict[sep_line[2]][species_list.index(sep_line[0])] == 'ac'):
+            a_dict[sep_line[2]][species_list.index(sep_line[0])] = 'acg'
+        if (a_dict[sep_line[2]][species_list.index(sep_line[0])] == 'c'):
+            a_dict[sep_line[2]][species_list.index(sep_line[0])] = 'cg'
+            
+with open("GWAS_SNPS_uniq_T.tsv", "r") as t_SNPs_file:
+    for line in t_SNPs_file:
+        sep_line = line.split('\t')
+        if (a_dict[sep_line[2]][species_list.index(sep_line[0])] == '-'):
+            a_dict[sep_line[2]][species_list.index(sep_line[0])] = 't'
+        if (a_dict[sep_line[2]][species_list.index(sep_line[0])] == 'a'):
+            a_dict[sep_line[2]][species_list.index(sep_line[0])] = 'at'
+        if (a_dict[sep_line[2]][species_list.index(sep_line[0])] == 'c'):
+            a_dict[sep_line[2]][species_list.index(sep_line[0])] = 'ct'
+        if (a_dict[sep_line[2]][species_list.index(sep_line[0])] == 'g'):
+            a_dict[sep_line[2]][species_list.index(sep_line[0])] = 'gt'
+        if (a_dict[sep_line[2]][species_list.index(sep_line[0])] == 'ac'):
+            a_dict[sep_line[2]][species_list.index(sep_line[0])] = 'act'
+        if (a_dict[sep_line[2]][species_list.index(sep_line[0])] == 'ag'):
+            a_dict[sep_line[2]][species_list.index(sep_line[0])] = 'agt'
+        if (a_dict[sep_line[2]][species_list.index(sep_line[0])] == 'cg'):
+            a_dict[sep_line[2]][species_list.index(sep_line[0])] = 'cgt'
+        if (a_dict[sep_line[2]][species_list.index(sep_line[0])] == 'acg'):
+            a_dict[sep_line[2]][species_list.index(sep_line[0])] = 'acgt'
+    
+#print output
+#SAVE AS CSV
+with open ("All_SNPs_matrix.tsv", "w") as output_file:
+    for key, value in a_dict.items():
+        bps = '\t'.join(value)
+        #print(key, '\t', bps[0:10])
+        output_file.write(key + '\t' + bps + '\n')
+```
+
+##RUN assemble_matrix_from_bps.py SCRIPT
+```{bash, eval = FALSE}
+#!/bin/bash
+#SBATCH -c 1                               # Request one core
+#SBATCH -t 00-12:00                         # Runtime in D-HH:MM format
+#SBATCH -p short                           # Partition to run in
+#SBATCH --mem=50G                         # Memory total in MiB (for all cores)
+#SBATCH -o run_assemble_matrix.out                 # File to which STDOUT will be written, including job ID (%j)
+#SBATCH -e run_assemble_matrix.err                 # File to which STDERR will be written, including job ID (%j)
+                                           # You can change the filenames given with -o and -e to any filenames you'd like
+# set up environment
+module load gcc
+module load python/3.7.4
+source mypythonfolder/myvirtualenv/bin/activate
+unset PYTHONPATH #necessary to use my version of pandas
+
+python3 assemble_matrix_from_bps.py
+```
+
+This produced the final matrix of alignments for all human SNPs in the UK Biobank.
