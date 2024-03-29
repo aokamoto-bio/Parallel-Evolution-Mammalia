@@ -109,54 +109,262 @@ rm(variants_2)
 save(quality_variants,file="quality_variants.Rda")
 ```
 
-###Now clean SNP dataframe so that only useful and simple information is retained.
+## Get SNP positions with sufficient alignments for analysis
 
+#Load species list
 ```{r}
-load("quality_variants.Rda")
-load("filter_SNP_df_2.Rda")
+###Make list of all species
+#For some reason, this requires joining two lists as trying to load all at once threw some errors. 
+species_list_A <- c('Acinonyx_jubatus','Acomys_cahirinus','Ailuropoda_melanoleuca','Ailurus_fulgens','Allactaga_bullata','Alouatta_palliata','Ammotragus_lervia','Anoura_caudifer','Antilocapra_americana','Aotus_nancymaae','Aplodontia_rufa','Artibeus_jamaicensis','Ateles_geoffroyi','Balaenoptera_acutorostrata','Balaenoptera_bonaerensis','Beatragus_hunteri','Bison_bison','Bos_indicus','Bos_mutus','Bos_taurus','Bubalus_bubalis','Callicebus_donacophilus','Callithrix_jacchus','Camelus_bactrianus','Camelus_dromedarius','Camelus_ferus','Canis_lupus','Canis_lupus_familiaris','Capra_aegagrus','Capra_hircus','Capromys_pilorides','Carollia_perspicillata','Castor_canadensis','Catagonus_wagneri','Cavia_aperea','Cavia_porcellus','Cavia_tschudii','Cebus_albifrons','Cebus_capucinus','Ceratotherium_simum','Ceratotherium_simum_cottoni','Cercocebus_atys','Cercopithecus_neglectus','Chaetophractus_vellerosus','Cheirogaleus_medius','Chinchilla_lanigera','Chlorocebus_sabaeus','Choloepus_didactylus', 'Choloepus_hoffmanni','Chrysochloris_asiatica','Colobus_angolensis','Condylura_cristata','Craseonycteris_thonglongyai','Cricetomys_gambianus','Cricetulus_griseus','Crocidura_indochinensis','Cryptoprocta_ferox','Ctenodactylus_gundi','Ctenomys_sociabilis','Cuniculus_paca','Dasyprocta_punctata','Dasypus_novemcinctus','Daubentonia_madagascariensis','Delphinapterus_leucas','Desmodus_rotundus','Dicerorhinus_sumatrensis','Diceros_bicornis','Dinomys_branickii','Dipodomys_ordii','Dipodomys_stephensi','Dolichotis_patagonum','Echinops_telfairi','Eidolon_helvum','Elaphurus_davidianus','Elephantulus_edwardii','Ellobius_lutescens','Ellobius_talpinus','Enhydra_lutris','Eptesicus_fuscus','Equus_asinus','Equus_caballus','Equus_przewalskii','Erinaceus_europaeus','Erythrocebus_patas','Eschrichtius_robustus','Eubalaena_japonica','Eulemur_flavifrons','Eulemur_fulvus','Felis_catus','Felis_nigripes','Fukomys_damarensis','Galeopterus_variegatus','Giraffa_tippelskirchi','Glis_glis','Gorilla_gorilla','Graphiurus_murinus','Helogale_parvula','Hemitragus_hylocrius','Heterocephalus_glaber','Heterohyrax_brucei','Hippopotamus_amphibius','Hipposideros_armiger','Hipposideros_galeritus','Homo_sapiens','Hyaena_hyaena','Hydrochoerus_hydrochaeris','Hystrix_cristata','Ictidomys_tridecemlineatus','Indri_indri','Inia_geoffrensis','Jaculus_jaculus','Kogia_breviceps','Lasiurus_borealis','Lemur_catta','Leptonychotes_weddellii','Lepus_americanus','Lipotes_vexillifer','Loxodonta_africana','Lycaon_pictus','Macaca_fascicularis','Macaca_mulatta','Macaca_nemestrina','Macroglossus_sobrinus','Mandrillus_leucophaeus','Manis_javanica','Manis_pentadactyla','Marmota_marmota','Megaderma_lyra','Mellivora_capensis','Meriones_unguiculatus','Mesocricetus_auratus','Mesoplodon_bidens','Microcebus_murinus','Microgale_talazaci','Micronycteris_hirsuta','Microtus_ochrogaster','Miniopterus_natalensis','Miniopterus_schreibersii','Mirounga_angustirostris','Mirza_coquereli','Monodon_monoceros','Mormoops_blainvillei','Moschus_moschiferus','Mungos_mungo','Murina_feae','Muscardinus_avellanarius','Mus_caroli','Mus_musculus','Mus_pahari')
+species_list_B <- c('Mus_spretus','Mustela_putorius','Myocastor_coypus','Myotis_brandtii','Myotis_davidii','Myotis_lucifugus','Myotis_myotis','Myrmecophaga_tridactyla','Nannospalax_galili','Nasalis_larvatus','Neomonachus_schauinslandi','Neophocaena_asiaeorientalis','Noctilio_leporinus','Nomascus_leucogenys','Nycticebus_coucang','Ochotona_princeps','Octodon_degus','Odobenus_rosmarus','Odocoileus_virginianus','Okapia_johnstoni','Ondatra_zibethicus','Onychomys_torridus','Orcinus_orca','Orycteropus_afer','Oryctolagus_cuniculus','Otolemur_garnettii','Ovis_aries','Ovis_canadensis','Pan_paniscus','Panthera_onca','Panthera_pardus','Panthera_tigris','Pantholops_hodgsonii','Pan_troglodytes','Papio_anubis','Paradoxurus_hermaphroditus','Perognathus_longimembris','Peromyscus_maniculatus','Petromus_typicus','Phocoena_phocoena','Piliocolobus_tephrosceles','Pipistrellus_pipistrellus','Pithecia_pithecia','Platanista_gangetica','Pongo_abelii','Procavia_capensis', 'Propithecus_coquereli','Psammomys_obesus','Pteronotus_parnellii','Pteronura_brasiliensis','Pteropus_alecto','Pteropus_vampyrus','Puma_concolor','Pygathrix_nemaeus','Rangifer_tarandus','Rattus_norvegicus','Rhinolophus_sinicus','Rhinopithecus_bieti','Rhinopithecus_roxellana','Rousettus_aegyptiacus','Saguinus_imperator','Saiga_tatarica','Saimiri_boliviensis','Scalopus_aquaticus','Semnopithecus_entellus','Sigmodon_hispidus','Solenodon_paradoxus','Sorex_araneus','Spermophilus_dauricus','Spilogale_gracilis','Suricata_suricatta','Sus_scrofa','Tadarida_brasiliensis','Tamandua_tetradactyla','Tapirus_indicus','Tapirus_terrestris','Thryonomys_swinderianus','Tolypeutes_matacus','Tonatia_saurophila','Tragulus_javanicus','Trichechus_manatus','Tupaia_chinensis','Tupaia_tana','Tursiops_truncatus','Uropsilus_gracilis','Ursus_maritimus','Vicugna_pacos','Vulpes_lagopus','Xerus_inauris','Zalophus_californianus','Zapus_hudsonius','Ziphius_cavirostris')
+species_list <- append(species_list_A, species_list_B)
+rm(species_list_A)
+rm(species_list_B)
+```
 
-#merge SNP matrix data with variant data 
-merged_data <- merge(x = filter_SNP_df_2, y = quality_variants, by.x = 0, by.y = 'rsid')
+###Based on previous attempts, it is clear that percentage alignment/phylogeny is heavily confounding. Therefore, it is necessary only to focus on SNPs that alignment in most, if not all, species. 
 
-#remove extra columns, split data into variants and merged data to make two smaller data frames. 
-quality_variants_matched <-merged_data[, c(1,243:267)]
-merged_data<- merged_data[, 1:242]
+So, starting from scratch need to process alignment:
+1. remove regions without human match
+2. remove humans from alignment
+3. filter by 75% alignment
+4. convert format and remove multi allelic alignments
+```{r}
+#commented out to prevent accidentally running this block
+#raw_SNP_matrix <- fread(file = 'All_SNPs_matrix.tsv', sep = '\t', header = FALSE,  showProgress= TRUE)
+raw_SNP_matrix <- as.matrix(raw_SNP_matrix,rownames=1)
+#set column names for each species 
+colnames(raw_SNP_matrix) <- species_list
+#get matrix dimensions
+#First, remove all SNPs for which a human BP was not found. There are very few of these and they should be places were the reference genome used in the alignment is missing a short stretch of DNA (such as an insertion)
+filter_SNP_matrix <- raw_SNP_matrix[raw_SNP_matrix[, "Homo_sapiens"] != "-",]
+#remove raw data file since it's huge 
+rm(raw_SNP_matrix)
+#now make a dataframe out of the matrix
+filter_SNP_df <- as.data.frame(filter_SNP_matrix)
+rm(filter_SNP_matrix)
+gc()
+filter_SNP_df<- subset(filter_SNP_df, select = -Homo_sapiens)
+#count alignments for each SNP
+filter_SNP_df$alignment_n <- rowSums(filter_SNP_df != "-")
+
+#select all SNPs with greater than 75% alignment in all species 
+filter_SNP_df_mammal_cons <- filter_SNP_df %>% filter(alignment_n >= 180)
 #remove any SNP positions for any species that have >2 bps found. 
-merged_data[merged_data == "acgt"] <- "-"
-merged_data[merged_data == "acg"] <- "-"
-merged_data[merged_data == "agt"] <- "-"
-merged_data[merged_data == "cgt"] <- "-"
+filter_SNP_df_mammal_cons[filter_SNP_df_mammal_cons == "acgt"] <- "-"
+filter_SNP_df_mammal_cons[filter_SNP_df_mammal_cons == "acg"] <- "-"
+filter_SNP_df_mammal_cons[filter_SNP_df_mammal_cons == "agt"] <- "-"
+filter_SNP_df_mammal_cons[filter_SNP_df_mammal_cons == "cgt"] <- "-"
 
 #again, >1 bp is rare (<0.2% of data and therefore will be removed for the moment) so remove those as well.
-merged_data[merged_data == "ac"] <- "-"
-merged_data[merged_data == "ag"] <- "-"
-merged_data[merged_data == "at"] <- "-"
-merged_data[merged_data == "cg"] <- "-"
-merged_data[merged_data == "ct"] <- "-"
-merged_data[merged_data == "gt"] <- "-"
+filter_SNP_df_mammal_cons[filter_SNP_df_mammal_cons == "ac"] <- "-"
+filter_SNP_df_mammal_cons[filter_SNP_df_mammal_cons == "ag"] <- "-"
+filter_SNP_df_mammal_cons[filter_SNP_df_mammal_cons == "at"] <- "-"
+filter_SNP_df_mammal_cons[filter_SNP_df_mammal_cons == "cg"] <- "-"
+filter_SNP_df_mammal_cons[filter_SNP_df_mammal_cons == "ct"] <- "-"
+filter_SNP_df_mammal_cons[filter_SNP_df_mammal_cons == "gt"] <- "-"
 
 #now convert format to uppercase BPs and 0 for no relevant BP. 
-merged_data[merged_data == "a"] <- "A"
-merged_data[merged_data == "c"] <- "C"
-merged_data[merged_data == "g"] <- "G"
-merged_data[merged_data == "t"] <- "T"
-merged_data[merged_data == "-"] <- "0"
+filter_SNP_df_mammal_cons[filter_SNP_df_mammal_cons == "a"] <- "A"
+filter_SNP_df_mammal_cons[filter_SNP_df_mammal_cons == "c"] <- "C"
+filter_SNP_df_mammal_cons[filter_SNP_df_mammal_cons == "g"] <- "G"
+filter_SNP_df_mammal_cons[filter_SNP_df_mammal_cons == "t"] <- "T"
+filter_SNP_df_mammal_cons[filter_SNP_df_mammal_cons == "-"] <- "0"
 
-#so, some SNPs have >2 alleles in humans. For the moment, will just remove those. This was only 37953 SNPs, ~0.3% of total SNPs. 
-merged_data_cleaned <- merged_data[!duplicated(merged_data$Row.names), ]
-row.names(merged_data_cleaned) <- merged_data_cleaned$Row.names
+#add rsID colummn
+filter_SNP_df_mammal_cons$rsID <- row.names(filter_SNP_df_mammal_cons)
 
-#Lastly, we remove all BPs for other species that do not match the human alt or ref allele. 
+write.table(filter_SNP_df_mammal_cons, file = "SNP_df_mammal_cons.tsv", row.names=FALSE, sep="\t")
+```
+Now make the primate specific version
 
-#this checks for alleles not matching a human chromosome 
-for (animal in species_list){
-  #identify SNPS for which the species allele does not match either human ref or alt allele
-  bad_snps <- merged_data_cleaned[animal] != merged_data_cleaned$ref & merged_data_cleaned[animal] != merged_data_cleaned$alt 
-  #replace mismatchs with '0'
-  merged_data_cleaned[animal][bad_snps] <- '0'
+```{r}
+DONT RUN BY ACCIDENT 
+
+#load info on the 241 mammals
+mammals_info<-fread(file = "241_mammals_info.csv", header = TRUE)
+primates <- mammals_info[,1:4]  %>% filter(Order == 'PRIMATES')  %>% filter(Species != 'Homo_sapiens')
+
+#select all SNPs with greater than 75% alignment in all species 
+filter_SNP_df_primates <- filter_SNP_df %>% select(primates$Species) 
+filter_SNP_df_primates$alignment_n <- rowSums(filter_SNP_df_primates != "-")
+filter_SNP_df_primates_cons <- filter_SNP_df_primates %>% filter(alignment_n >= 36)
+
+#remove any SNP positions for any species that have >2 bps found. 
+filter_SNP_df_primates_cons[filter_SNP_df_primates_cons == "acgt"] <- "-"
+filter_SNP_df_primates_cons[filter_SNP_df_primates_cons == "acg"] <- "-"
+filter_SNP_df_primates_cons[filter_SNP_df_primates_cons == "agt"] <- "-"
+filter_SNP_df_primates_cons[filter_SNP_df_primates_cons == "cgt"] <- "-"
+
+#again, >1 bp is rare (<0.2% of data and therefore will be removed for the moment) so remove those as well.
+filter_SNP_df_primates_cons[filter_SNP_df_primates_cons == "ac"] <- "-"
+filter_SNP_df_primates_cons[filter_SNP_df_primates_cons == "ag"] <- "-"
+filter_SNP_df_primates_cons[filter_SNP_df_primates_cons == "at"] <- "-"
+filter_SNP_df_primates_cons[filter_SNP_df_primates_cons == "cg"] <- "-"
+filter_SNP_df_primates_cons[filter_SNP_df_primates_cons == "ct"] <- "-"
+filter_SNP_df_primates_cons[filter_SNP_df_primates_cons == "gt"] <- "-"
+
+#now convert format to uppercase BPs and 0 for no relevant BP. 
+filter_SNP_df_primates_cons[filter_SNP_df_primates_cons == "a"] <- "A"
+filter_SNP_df_primates_cons[filter_SNP_df_primates_cons == "c"] <- "C"
+filter_SNP_df_primates_cons[filter_SNP_df_primates_cons == "g"] <- "G"
+filter_SNP_df_primates_cons[filter_SNP_df_primates_cons == "t"] <- "T"
+filter_SNP_df_primates_cons[filter_SNP_df_primates_cons == "-"] <- "0"
+
+#add rsID colummn
+filter_SNP_df_primates_cons$rsID <- row.names(filter_SNP_df_primates_cons)
+
+#check number of alignments for each species
+#colSums(filter_SNP_df_primates_cons[,1:42] != 0)
+
+write.table(filter_SNP_df_primates_cons, file = "SNP_df_primates_cons.tsv", row.names=FALSE, sep="\t")
+```
+
+Now, check for number that are "quality variants" and created merged dataframes
+```{r}
+SNP_df_mammal_cons <- fread(file = "SNP_df_mammal_cons.tsv", header = TRUE,  showProgress= TRUE)
+SNP_df_primates_cons <- fread(file = "SNP_df_primates_cons.tsv", header = TRUE,  showProgress= TRUE)
+quality_variants_matched <- fread(file = "quality_variants_matched.tsv", header = TRUE,  showProgress= TRUE)
+SNP_df_primates_cons_merged <- merge(x = quality_variants_matched, y = SNP_df_primates_cons, by.x = 'Row.names', by.y = 'rsID')
+SNP_df_mammal_cons_merged <- merge(x = quality_variants_matched, y = SNP_df_mammal_cons, by.x = 'Row.names', by.y = 'rsID')
+```
+
+
+## Prune away uninformative SNPs
+
+```{r}
+###Load all packages required at some point
+setwd('~/Polygenic_Inference')
+#load package for easily reading large files quickly
+library(data.table)
+#load package for PGLS
+library(ape)
+library(nlme)
+library(tidyverse)
+
+#load the datasets
+SNP_df_mammal_cons <- fread(file = "SNP_df_mammal_cons.tsv", header = TRUE,  showProgress= TRUE)
+SNP_df_primates_cons <- fread(file = "SNP_df_primates_cons.tsv", header = TRUE,  showProgress= TRUE)
+quality_variants_matched <- fread(file = "quality_variants_matched.tsv", header = TRUE,  showProgress= TRUE)
+SNP_df_primates_cons_merged <- merge(x = quality_variants_matched, y = SNP_df_primates_cons, by.x = 'Row.names', by.y = 'rsID')
+SNP_df_mammal_cons_merged <- merge(x = quality_variants_matched, y = SNP_df_mammal_cons, by.x = 'Row.names', by.y = 'rsID')
+
+#load species data
+mammals_info <- fread(file = "241_mammals_info.csv", header = TRUE) %>% select(1:3)
+species_list <-fread(file = "241_mammals_info.csv", header = TRUE) %>% select(Species) %>% filter(Species != 'Homo_sapiens') 
+primates <- mammals_info[,1:3]  %>% filter(Order == 'PRIMATES')  %>% filter(Species != 'Homo_sapiens')
+
+#make functions to count basepairs for mammals and primates
+count_matches <- function(x){
+  bps <- c("A", "C", "G", "T")
+  #see how many of the four possible base pairs are found at this site
+  allele_num <- length(unique(x[species_list$Species][which(x[species_list$Species]!='0')]))
+  #count ref, alt, other bp, and no alignments at this site
+  ref <- length(which(as.character(x['ref'])==x[species_list$Species]))
+  alt <- length(which(as.character(x['alt'])==x[species_list$Species]))
+  unused_bps <- setdiff(bps, c(x['ref'], x['alt']))
+  unused <- length(which(unused_bps[1]==x[species_list$Species])) + length(which(unused_bps[2]==x[species_list$Species])) 
+  no_align <- length(which("0"==x[species_list$Species]))
+  return(paste(ref, alt, unused, no_align, allele_num))
 }
 
-#save output
-save(quality_variants_matched,file="quality_variants_matched.Rda")
-save(merged_data_cleaned,file="merged_data_cleaned.Rda")
+#now for primates
+count_matches_primates <- function(x){
+  bps <- c("A", "C", "G", "T")
+  #see how many of the four possible base pairs are found at this site
+  allele_num <- length(unique(x[primates$Species][which(x[primates$Species]!='0')]))
+  #count ref, alt, other bp, and no alignments at this site
+  ref <- length(which(as.character(x['ref'])==x[primates$Species]))
+  alt <- length(which(as.character(x['alt'])==x[primates$Species]))
+  unused_bps <- setdiff(bps, c(x['ref'], x['alt']))
+  unused <- length(which(unused_bps[1]==x[primates$Species])) + length(which(unused_bps[2]==x[primates$Species])) 
+  no_align <- length(which("0"==x[primates$Species]))
+  return(paste(ref, alt, unused, no_align, allele_num))
+}
+
+#run functions
+SNP_df_mammal_cons_merged$matches <- apply(SNP_df_mammal_cons_merged, MARGIN = 1, count_matches)
+SNP_df_primates_cons_merged$matches <- apply(SNP_df_primates_cons_merged, MARGIN = 1, count_matches_primates)
+
+#trim resulting datasets
+SNP_df_mammal_cleaned <- SNP_df_mammal_cons_merged %>% separate(col = matches, into = c("ref_align_ct", 'alt_align_ct', 'other_align_ct', 'no_align_ct', 'allele_num'), sep = " ") %>%filter(allele_num < 5)%>% filter(ref_align_ct > 1) %>% filter(alt_align_ct > 1)
+#save resulting filtered data 
+write_tsv(x = SNP_df_mammal_cleaned, file = "SNP_df_mammal_cleaned.tsv")
+
+SNP_df_primates_cleaned <- SNP_df_primates_cons_merged %>% separate(col = matches, into = c("ref_align_ct", 'alt_align_ct', 'other_align_ct', 'no_align_ct', 'allele_num'), sep = " ") %>% filter(allele_num < 5) %>% filter(ref_align_ct > 1) %>% filter(alt_align_ct > 1)
+#save resulting filtered data 
+write_tsv(x = SNP_df_primates_cleaned, file = "SNP_df_primates_cleaned.tsv")
 ```
+## Prune monophyletic SNPS
+
+'''{r}
+###Load all packages required at some point
+setwd('~/Polygenic_Inference')
+#load package for easily reading large files quickly
+library(data.table)
+#load package for PGLS
+library(ape)
+library(tidyverse)
+
+#load in cleaned data
+SNP_df_mammal_cleaned <- fread('SNP_df_mammal_cleaned.tsv')
+SNP_df_primates_cleaned <- fread('SNP_df_primates_cleaned.tsv')
+
+#load in and correct species tree
+AllSpeciesTree <- read.tree("species_tree.nwk")
+AllSpeciesTree$tip.label[AllSpeciesTree$tip.label == "Plecturocebus_donacophilus"] <- "Callicebus_donacophilus"
+AllSpeciesTree$tip.label[AllSpeciesTree$tip.label == "Monachus_schauinslandi"] <- "Neomonachus_schauinslandi"
+
+#create phylogenetic distance matrix between tips
+phylo_dist_df <- cophenetic(AllSpeciesTree) %>% as.data.frame()
+
+#load species data
+mammals_info <- fread(file = "241_mammals_info.csv", header = TRUE) %>% select(1:3)
+species_list <-fread(file = "241_mammals_info.csv", header = TRUE) %>% select(Species) %>% filter(Species != 'Homo_sapiens') 
+primates <- mammals_info[,1:3]  %>% filter(Order == 'PRIMATES')  %>% filter(Species != 'Homo_sapiens')
+
+#create a function to identify SNPs uninformative due to a single phylogenetic origin
+identify_phylo_SNPs <- function(line, species_names){
+  line <- as.data.table(t(line))
+  ref_species_pos <- which(line==line$ref) 
+  alt_species_pos <- which(line==line$alt) 
+  #need to modify lines below with real species list
+  ref_species <- line %>% select(all_of(ref_species_pos)) %>% select(any_of(species_names)) %>% colnames() %>% as.character()
+  alt_species <- line %>% select(all_of(alt_species_pos)) %>% select(any_of(species_names)) %>% colnames() %>% as.character()
+  #check if the reference allele resulted from a single mutation
+  ref_max <- phylo_dist_df[ref_species[1],] %>% select(-ref_species[1]) %>% select(any_of(ref_species)) %>% max()
+  alt_min <- phylo_dist_df[ref_species[1],] %>% select(any_of(alt_species)) %>% min()
+  #check ref allele for single origin
+  if(ref_max < alt_min) {
+    return("ref_max < alt_min")
+  }
+  #check if the alternate allele resulted from a single mutation
+  alt_max <- phylo_dist_df[alt_species[1],] %>% select(-alt_species[1]) %>% select(any_of(alt_species)) %>% max()
+  ref_min <- phylo_dist_df[alt_species[1],] %>% select(any_of(ref_species)) %>% min()
+  #check alt allele for single origin
+  if(alt_max < ref_min){
+    return("alt_max < ref_min")
+  }
+  else{
+    return("Good SNP")
+  }
+}
+
+#run it for the whole dataset
+SNP_df_mammal_cleaned$monophyletic <- apply(SNP_df_mammal_cleaned, MARGIN = 1, identify_phylo_SNPs, species_list$Species)
+SNP_df_mammal_phylo_cleaned <- SNP_df_mammal_cleaned %>% filter(monophyletic=='Good SNP') %>% select(-monophyletic)
+
+#save resulting filtered data 
+write_tsv(x = SNP_df_mammal_phylo_cleaned, file = "SNP_df_mammal_phylo_cleaned.tsv")
+
+#run it for the primates dataset
+SNP_df_primates_cleaned$monophyletic <- apply(SNP_df_primates_cleaned, MARGIN = 1, identify_phylo_SNPs, primates$Species)
+SNP_df_primates_phylo_cleaned <- SNP_df_primates_cleaned %>% filter(monophyletic=='Good SNP') %>% select(-monophyletic)
+
+#save resulting filtered data 
+write_tsv(x = SNP_df_primates_phylo_cleaned, file = "SNP_df_primates_phylo_cleaned.tsv")
+'''
+
+
+
+
