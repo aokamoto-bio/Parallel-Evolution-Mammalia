@@ -1,0 +1,162 @@
+---
+title: "Code 2 Parallel Evolution"
+author: "Alexander Okamoto"
+date: "2023-01-19"
+output: html_document
+---
+
+###Load all packages required at some point
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = '/Polygenic_Inference')
+#load package for easily reading large files quickly
+library(data.table)
+#load package for PGLS
+library(ape)
+library(nlme)
+library(tidyverse)
+
+#for reading gz files 
+#install.packages('R.utils')
+library(R.utils)
+```
+
+###Import data
+Warning: this is fairly slow. This reads the 'raw' SNP matrix we made. It is quite large and therefore is commented out to avoid running by accident
+```{r}
+#read in the R matrix. Output is 25G so it runs slowly.
+
+#raw_SNP_matrix <- as.matrix(fread(file = 'All_SNPs_matrix.tsv', sep = '\t', header = FALSE,  showProgress= TRUE),rownames=1)
+#select= 1:25,
+
+#This loads the full set of variants. Subsequent steps cleaned the variants so load a more processed version later.
+
+#variants <- fread(file = "variants_cleaned.tsv", sep = '\t', header = TRUE,  showProgress= TRUE)
+```
+
+###Make list of all species
+For some reason, this requires joining two lists as trying to load all at once threw some errors. 
+```{r}
+species_list_A <- c('Acinonyx_jubatus','Acomys_cahirinus','Ailuropoda_melanoleuca','Ailurus_fulgens','Allactaga_bullata','Alouatta_palliata','Ammotragus_lervia','Anoura_caudifer','Antilocapra_americana','Aotus_nancymaae','Aplodontia_rufa','Artibeus_jamaicensis','Ateles_geoffroyi','Balaenoptera_acutorostrata','Balaenoptera_bonaerensis','Beatragus_hunteri','Bison_bison','Bos_indicus','Bos_mutus','Bos_taurus','Bubalus_bubalis','Callicebus_donacophilus','Callithrix_jacchus','Camelus_bactrianus','Camelus_dromedarius','Camelus_ferus','Canis_lupus','Canis_lupus_familiaris','Capra_aegagrus','Capra_hircus','Capromys_pilorides','Carollia_perspicillata','Castor_canadensis','Catagonus_wagneri','Cavia_aperea','Cavia_porcellus','Cavia_tschudii','Cebus_albifrons','Cebus_capucinus','Ceratotherium_simum','Ceratotherium_simum_cottoni','Cercocebus_atys','Cercopithecus_neglectus','Chaetophractus_vellerosus','Cheirogaleus_medius','Chinchilla_lanigera','Chlorocebus_sabaeus','Choloepus_didactylus', 'Choloepus_hoffmanni','Chrysochloris_asiatica','Colobus_angolensis','Condylura_cristata','Craseonycteris_thonglongyai','Cricetomys_gambianus','Cricetulus_griseus','Crocidura_indochinensis','Cryptoprocta_ferox','Ctenodactylus_gundi','Ctenomys_sociabilis','Cuniculus_paca','Dasyprocta_punctata','Dasypus_novemcinctus','Daubentonia_madagascariensis','Delphinapterus_leucas','Desmodus_rotundus','Dicerorhinus_sumatrensis','Diceros_bicornis','Dinomys_branickii','Dipodomys_ordii','Dipodomys_stephensi','Dolichotis_patagonum','Echinops_telfairi','Eidolon_helvum','Elaphurus_davidianus','Elephantulus_edwardii','Ellobius_lutescens','Ellobius_talpinus','Enhydra_lutris','Eptesicus_fuscus','Equus_asinus','Equus_caballus','Equus_przewalskii','Erinaceus_europaeus','Erythrocebus_patas','Eschrichtius_robustus','Eubalaena_japonica','Eulemur_flavifrons','Eulemur_fulvus','Felis_catus','Felis_nigripes','Fukomys_damarensis','Galeopterus_variegatus','Giraffa_tippelskirchi','Glis_glis','Gorilla_gorilla','Graphiurus_murinus','Helogale_parvula','Hemitragus_hylocrius','Heterocephalus_glaber','Heterohyrax_brucei','Hippopotamus_amphibius','Hipposideros_armiger','Hipposideros_galeritus','Homo_sapiens','Hyaena_hyaena','Hydrochoerus_hydrochaeris','Hystrix_cristata','Ictidomys_tridecemlineatus','Indri_indri','Inia_geoffrensis','Jaculus_jaculus','Kogia_breviceps','Lasiurus_borealis','Lemur_catta','Leptonychotes_weddellii','Lepus_americanus','Lipotes_vexillifer','Loxodonta_africana','Lycaon_pictus','Macaca_fascicularis','Macaca_mulatta','Macaca_nemestrina','Macroglossus_sobrinus','Mandrillus_leucophaeus','Manis_javanica','Manis_pentadactyla','Marmota_marmota','Megaderma_lyra','Mellivora_capensis','Meriones_unguiculatus','Mesocricetus_auratus','Mesoplodon_bidens','Microcebus_murinus','Microgale_talazaci','Micronycteris_hirsuta','Microtus_ochrogaster','Miniopterus_natalensis','Miniopterus_schreibersii','Mirounga_angustirostris','Mirza_coquereli','Monodon_monoceros','Mormoops_blainvillei','Moschus_moschiferus','Mungos_mungo','Murina_feae','Muscardinus_avellanarius','Mus_caroli','Mus_musculus','Mus_pahari')
+species_list_B <- c('Mus_spretus','Mustela_putorius','Myocastor_coypus','Myotis_brandtii','Myotis_davidii','Myotis_lucifugus','Myotis_myotis','Myrmecophaga_tridactyla','Nannospalax_galili','Nasalis_larvatus','Neomonachus_schauinslandi','Neophocaena_asiaeorientalis','Noctilio_leporinus','Nomascus_leucogenys','Nycticebus_coucang','Ochotona_princeps','Octodon_degus','Odobenus_rosmarus','Odocoileus_virginianus','Okapia_johnstoni','Ondatra_zibethicus','Onychomys_torridus','Orcinus_orca','Orycteropus_afer','Oryctolagus_cuniculus','Otolemur_garnettii','Ovis_aries','Ovis_canadensis','Pan_paniscus','Panthera_onca','Panthera_pardus','Panthera_tigris','Pantholops_hodgsonii','Pan_troglodytes','Papio_anubis','Paradoxurus_hermaphroditus','Perognathus_longimembris','Peromyscus_maniculatus','Petromus_typicus','Phocoena_phocoena','Piliocolobus_tephrosceles','Pipistrellus_pipistrellus','Pithecia_pithecia','Platanista_gangetica','Pongo_abelii','Procavia_capensis', 'Propithecus_coquereli','Psammomys_obesus','Pteronotus_parnellii','Pteronura_brasiliensis','Pteropus_alecto','Pteropus_vampyrus','Puma_concolor','Pygathrix_nemaeus','Rangifer_tarandus','Rattus_norvegicus','Rhinolophus_sinicus','Rhinopithecus_bieti','Rhinopithecus_roxellana','Rousettus_aegyptiacus','Saguinus_imperator','Saiga_tatarica','Saimiri_boliviensis','Scalopus_aquaticus','Semnopithecus_entellus','Sigmodon_hispidus','Solenodon_paradoxus','Sorex_araneus','Spermophilus_dauricus','Spilogale_gracilis','Suricata_suricatta','Sus_scrofa','Tadarida_brasiliensis','Tamandua_tetradactyla','Tapirus_indicus','Tapirus_terrestris','Thryonomys_swinderianus','Tolypeutes_matacus','Tonatia_saurophila','Tragulus_javanicus','Trichechus_manatus','Tupaia_chinensis','Tupaia_tana','Tursiops_truncatus','Uropsilus_gracilis','Ursus_maritimus','Vicugna_pacos','Vulpes_lagopus','Xerus_inauris','Zalophus_californianus','Zapus_hudsonius','Ziphius_cavirostris')
+species_list <- append(species_list_A, species_list_B)
+rm(species_list_A)
+rm(species_list_B)
+```
+
+###Process Raw Matrix
+#again commented to avoid running by accident
+```{r}
+#add column names to raw SNP matrix if desired 
+#colnames(raw_SNP_matrix) <- species_list
+#get matrix dimensions
+#dim(raw_SNP_matrix)
+#identify SNPs for which no human alignment found
+#table(raw_SNP_matrix[, "Homo_sapiens"])
+#
+#      -       a       c       g       t 
+#  91200 2757942 3610379 3540417 2757448 
+# 306177264 total cells
+#length(which(raw_SNP_matrix == '-'))
+#164578164 empty cells 
+#164578164 /306177264
+# 0.5375258 of cells empty
+#length(which(raw_SNP_matrix == 'acgt'))
+#number of cells with 4 bps: 2382
+```
+
+### Filter raw SNP matrix
+```{r, eval=FALSE}
+#First, remove all SNPs for which a human BP was not found. There are very few of these and they should be places were the reference genome used in the alignment is missing a short stretch of DNA (such as an insertion) 
+filter_SNP_matrix <- raw_SNP_matrix[raw_SNP_matrix[, "Homo_sapiens"] != "-",]
+#remove raw data file since it's huge 
+rm(raw_SNP_matrix)
+#now make a dataframe out of the matrix
+filter_SNP_df <- as.data.frame(filter_SNP_matrix)
+
+#save and load this dataframe if needed
+#save(filter_SNP_df,file="filter_SNP_df.Rda")
+#load("filter_SNP_df.Rda")
+
+#count number of alignments for each SNP
+filter_SNP_df$no_bp_num <- rowSums(filter_SNP_df[,1:241] != "-")
+#remove any SNPs that only have an alignment in human
+filter_SNP_df_2 <-filter_SNP_df[filter_SNP_df$no_bp_num > 1,]
+#save(filter_SNP_df_2,file="filter_SNP_df_2.Rda")
+
+#visualize frequency of number of alignments
+plot(table(filter_SNP_df_2$no_bp_num))
+```
+
+
+###Remove blacklisted regions
+ENCODE project blacklist regions downloaded from https://github.com/Boyle-Lab/Blacklist/blob/master/lists/hg38-blacklist.v2.bed.gz
+No need to run this chunk, just here if needed again for some reason. Just load quality variants below. 
+
+```{r}
+#loaded variants, now using file cleaned to contain only autosomes
+variants <- fread(file = "variants_cleaned.tsv", sep = '\t', header = TRUE,  showProgress= TRUE)
+#load in autosome blacklist variants with added rsIDs
+variants_blacklist_cleaned <- fread(file = "variants_blacklist_cleaned.bed", sep = '\t', header = FALSE,  showProgress= TRUE)
+#filter out blacklisted variants
+variants_2 <-  merge(x = variants, y = variants_blacklist_cleaned, by.x = 'rsid', by.y = 'V4')
+#remove unnecessary large files
+rm(variants_blacklist_cleaned)
+rm(variants)
+quality_variants <- variants_2[variants_2$V5 == "keep",1:25]
+rm(variants_2)
+#save file for future use 
+save(quality_variants,file="quality_variants.Rda")
+```
+
+###Now clean SNP dataframe so that only useful and simple information is retained.
+
+```{r}
+load("quality_variants.Rda")
+load("filter_SNP_df_2.Rda")
+
+#merge SNP matrix data with variant data 
+merged_data <- merge(x = filter_SNP_df_2, y = quality_variants, by.x = 0, by.y = 'rsid')
+
+#remove extra columns, split data into variants and merged data to make two smaller data frames. 
+quality_variants_matched <-merged_data[, c(1,243:267)]
+merged_data<- merged_data[, 1:242]
+#remove any SNP positions for any species that have >2 bps found. 
+merged_data[merged_data == "acgt"] <- "-"
+merged_data[merged_data == "acg"] <- "-"
+merged_data[merged_data == "agt"] <- "-"
+merged_data[merged_data == "cgt"] <- "-"
+
+#again, >1 bp is rare (<0.2% of data and therefore will be removed for the moment) so remove those as well.
+merged_data[merged_data == "ac"] <- "-"
+merged_data[merged_data == "ag"] <- "-"
+merged_data[merged_data == "at"] <- "-"
+merged_data[merged_data == "cg"] <- "-"
+merged_data[merged_data == "ct"] <- "-"
+merged_data[merged_data == "gt"] <- "-"
+
+#now convert format to uppercase BPs and 0 for no relevant BP. 
+merged_data[merged_data == "a"] <- "A"
+merged_data[merged_data == "c"] <- "C"
+merged_data[merged_data == "g"] <- "G"
+merged_data[merged_data == "t"] <- "T"
+merged_data[merged_data == "-"] <- "0"
+
+#so, some SNPs have >2 alleles in humans. For the moment, will just remove those. This was only 37953 SNPs, ~0.3% of total SNPs. 
+merged_data_cleaned <- merged_data[!duplicated(merged_data$Row.names), ]
+row.names(merged_data_cleaned) <- merged_data_cleaned$Row.names
+
+#Lastly, we remove all BPs for other species that do not match the human alt or ref allele. 
+
+#this checks for alleles not matching a human chromosome 
+for (animal in species_list){
+  #identify SNPS for which the species allele does not match either human ref or alt allele
+  bad_snps <- merged_data_cleaned[animal] != merged_data_cleaned$ref & merged_data_cleaned[animal] != merged_data_cleaned$alt 
+  #replace mismatchs with '0'
+  merged_data_cleaned[animal][bad_snps] <- '0'
+}
+
+#save output
+save(quality_variants_matched,file="quality_variants_matched.Rda")
+save(merged_data_cleaned,file="merged_data_cleaned.Rda")
+```
