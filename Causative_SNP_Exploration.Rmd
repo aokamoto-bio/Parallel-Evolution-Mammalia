@@ -1,0 +1,515 @@
+---
+title: "Causative SNP Exploration"
+author: "Alexander Okamoto"
+date: "2023-10-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# PhyloP Analysis
+
+First, I downloaded the Zoonomia 241 alignment PhyloP scores and converted them to bed format via wig. After visually inspecting the bed, the resulting windows are larger than a single bp:
+
+chr8	144089333	144089335	id--1734656667	0.551000
+chr8	144089334	144089336	id--1734656666	0.433000
+chr8	144089335	144089337	id--1734656665	0.546000
+
+After inspecting these windows in the browser, the correct position is the second number. Below is the code to fix this. Also, I noticed the my code currently contains SNP information in hg19 coordinates so I need to add the correct data. 
+
+```{bash, eval = F}
+#get phyloP scores
+wget https://cgl.gi.ucsc.edu/data/cactus/241-mammalian-2020v2-hub/Homo_sapiens/241-mammalian-2020v2.bigWig
+
+#first conver to wig using Kent Utils bigWigToWig
+~/KentUtils/bigWigToWig 241-mammalian-2020v2.bigWig 241-mammalian-2020v2.wig
+
+#convert wig to bed format
+wig2bed < 241-mammalian-2020v2.wig > 241-mammalian-2020v2_attempt2.bed
+
+awk '{ \
+    if ($1 ~ /^chr/) { \
+        print $1"\t"$2"\t"$3"\tid-"NR"\t"$4; \
+    } \
+    }' /cold/aokamoto/241-mammalian-2020v2.wig \
+> ~/Polygenic_Inference/241-mammalian-2020v2.bed
+
+
+## Improved cCRE overlaps
+#these use overlap of human and mouse cCRE sets relevant to the trait studied.
+
+#mouse hematopoetic
+/Users/alexanderokamoto/Desktop/Polymorphisms\ Project/LiftOver/liftOver /Users/alexanderokamoto/Desktop/Mouse_VISION_cCREs_2023_Loc.bed /Users/alexanderokamoto/Desktop/Polymorphisms\ Project/liftOver/Chains/mm10ToHg38.over.chain /Users/alexanderokamoto/Desktop/Mouse_VISION_cCREs_2023_Loc_hg38.bed /Users/alexanderokamoto/Desktop/Mouse_VISION_cCREs_2023_esRP_unmapped_to_hg38.bed
+
+#mouse cCRE
+/Users/alexanderokamoto/Desktop/Polymorphisms\ Project/LiftOver/liftOver /Users/alexanderokamoto/Desktop/mm10-cCREs.bed /Users/alexanderokamoto/Desktop/Polymorphisms\ Project/liftOver/Chains/mm10ToHg38.over.chain /Users/alexanderokamoto/Desktop/mm10-cCREs_hg38.bed /Users/alexanderokamoto/Desktop/mm10-cCREs_unmapped_to_hg38.bed
+
+#now enrich using human/mouse cross-over
+bedtools intersect -a mammals_causative_SNPs_RBC_hg38.bed -b VISION_RBC_cCRE_human_mouse_shared.bed -wa | sort -k 1,1 -k2,2n> mammals_causative_cCRE2_RBC_hg38.bed 
+
+bedtools intersect -a mammals_causative_SNPs_BodySize_hg38.bed -b ENCODE_cCRE_human_mouse_shared.bed -wa | sort -k 1,1 -k2,2n > mammals_causative_cCRE2_BodySize_hg38.bed 
+
+#make non cCRE2 sets 
+for set in RBC BodySize
+do 
+bedtools subtract -A -a ~/Polygenic_Inference/mammals_causative_SNPs_${set}_hg38.bed -b ~/Polygenic_Inference/mammals_causative_cCRE2_${set}_hg38.bed | sort -k 1,1 -k2,2n > ~/Polygenic_Inference/mammals_causative_NOTcCRE2_${set}_hg38.bed
+done
+
+#calculate PhyloP Scores for cCRE sets
+for set in RBC BodySize
+do 
+awk -F "\t" 'OFS="\t" {print $1, $2-10, $3+10, $4}' mammals_causative_cCRE2_${set}_hg38.bed | sort -k1,1 -k2,2n | bedtools intersect -a stdin -b /cold/aokamoto/241-mammalian-2020v2.bed -sorted -wa -wb | sort -k1,1 -k2,2n | bedtools merge -i stdin -c 4,9 -o distinct,mean > PhyloP/mammals_causative_cCRE2_${set}_hg38.bed
+done
+
+#calculate PhyloP Scores for NOT cCRE sets
+for set in RBC BodySize
+do 
+awk -F "\t" 'OFS="\t" {print $1, $2-10, $3+10, $4}' mammals_causative_NOTcCRE2_${set}_hg38.bed | sort -k1,1 -k2,2n | bedtools intersect -a stdin -b /cold/aokamoto/241-mammalian-2020v2.bed -sorted -wa -wb | sort -k1,1 -k2,2n | bedtools merge -i stdin -c 4,9 -o distinct,mean > PhyloP/mammals_causative_NOTcCRE2_${set}_hg38.bed
+done
+
+#repeat for complete cCRE sets
+awk -F "\t" 'OFS="\t" {print $1, $2, $3, $4}' VISION_RBC_cCRE_human_mouse_shared.bed | sort -k1,1 -k2,2n | bedtools intersect -a stdin -b /cold/aokamoto/241-mammalian-2020v2.bed -sorted -wa -wb | sort -k1,1 -k2,2n | bedtools merge -i stdin -c 4,9 -o distinct,mean > PhyloP/VISION_RBC_cCRE_human_mouse_shared.bed
+
+awk -F "\t" 'OFS="\t" {print $1, $2, $3, $4}' ENCODE_cCRE_human_mouse_shared.bed | sort -k1,1 -k2,2n | bedtools intersect -a stdin -b /cold/aokamoto/241-mammalian-2020v2.bed -sorted -wa -wb | sort -k1,1 -k2,2n | bedtools merge -i stdin -c 4,9 -o distinct,mean > PhyloP/ENCODE_cCRE_human_mouse_shared.bed
+
+```
+
+
+### Get genes within 500kb of each SNP position
+
+#aside to get mouse genes
+Downloaded NCBI Ref genes from UCSC https://hgdownload.soe.ucsc.edu/goldenPath/mm10/database/
+awk -F "\t" 'OFS="\t" {print $3, $5, $8, $13}' refSeq_mm10.txt | bedtools merge -i stdin -c 4 -o distinct > refSeqGenes_mm10.bed
+awk -F "\t" 'OFS="\t" {print $3, $5, $8, $13}' refSeq_canFam6.txt | bedtools merge -i stdin -c 4 -o distinct > refSeqGenes_canFam6.bed
+awk -F "\t" 'OFS="\t" {print $3, $5, $8, $13}' refSeq_bosTau9.txt | bedtools merge -i stdin -c 4 -o distinct > refSeqGenes_bosTau9.bed
+awk -F "\t" 'OFS="\t" {print $3, $5, $8, $13}' refSeq_macFas5.txt | bedtools merge -i stdin -c 4 -o distinct > refSeqGenes_macFas5.bed
+
+
+#lifover to mouse
+
+for set in RBC BodySize
+do 
+
+awk -F "\t" 'OFS="\t" {print $1, $2, $3, $4}' /Users/alexanderokamoto/Desktop/mammals_causative_cCRE2_${set}_hg38.bed | /Users/alexanderokamoto/Desktop/Polymorphisms\ Project/LiftOver/liftOver stdin /Users/alexanderokamoto/Desktop/Polymorphisms\ Project/liftOver/Chains/hg38ToMm10.over.chain /Users/alexanderokamoto/Desktop/mammals_causative_cCRE2_${set}_mm10.bed /Users/alexanderokamoto/Desktop/mammals_causative_cCRE2_${set}_unmapped_to_mm10.bed
+
+awk -F "\t" 'OFS="\t" {print $1, $2, $3, $4}' /Users/alexanderokamoto/Desktop/mammals_causative_cCRE2_${set}_hg38.bed | /Users/alexanderokamoto/Desktop/Polymorphisms\ Project/LiftOver/liftOver stdin /Users/alexanderokamoto/Desktop/Polymorphisms\ Project/liftOver/Chains/hg38ToCanFam6.over.chain /Users/alexanderokamoto/Desktop/mammals_causative_cCRE2_${set}_canFam6.bed /Users/alexanderokamoto/Desktop/mammals_causative_cCRE2_${set}_unmapped_to_canFam6.bed
+
+awk -F "\t" 'OFS="\t" {print $1, $2, $3, $4}' /Users/alexanderokamoto/Desktop/mammals_causative_cCRE2_${set}_hg38.bed | /Users/alexanderokamoto/Desktop/Polymorphisms\ Project/LiftOver/liftOver stdin /Users/alexanderokamoto/Desktop/Polymorphisms\ Project/liftOver/Chains/hg38ToBosTau9.over.chain /Users/alexanderokamoto/Desktop/mammals_causative_cCRE2_${set}_bosTau9.bed /Users/alexanderokamoto/Desktop/mammals_causative_cCRE2_${set}_unmapped_to_bosTau9.bed
+
+awk -F "\t" 'OFS="\t" {print $1, $2, $3, $4}' /Users/alexanderokamoto/Desktop/mammals_causative_cCRE2_${set}_hg38.bed | /Users/alexanderokamoto/Desktop/Polymorphisms\ Project/LiftOver/liftOver stdin /Users/alexanderokamoto/Desktop/Polymorphisms\ Project/liftOver/Chains/hg38ToMacFas5.over.chain /Users/alexanderokamoto/Desktop/mammals_causative_cCRE2_${set}_macFas5.bed /Users/alexanderokamoto/Desktop/mammals_causative_cCRE2_${set}_unmapped_to_macFas5.bed
+
+done
+
+#This worked well and I figured out how to do this easily for other genomes so will repeat for dog, macaque, and cow
+
+```{bash}
+#merge bed files 
+
+#top for human bottom for mouse
+for set in BodySize
+do 
+awk -F "\t" 'OFS="\t" {print $1, $2-500000, $3+500000, $4}' ~/Polygenic_Inference/mammals_causative_cCRE2_${set}_hg38.bed | sed 's/-[0-9][0-9]*/1/' | sort -k 1,1 -k2,2n | bedtools intersect -a stdin -b ~/Polygenic_Inference/refSeqGenes_hg38.bed -wa -wb | sort -k 1,1 -k2,2n > ~/Polygenic_Inference/mammals_causative_cCRE2_genes_${set}_hg38.bed
+
+awk -F "\t" 'OFS="\t" {print $1, $2-500000, $3+500000, $4}' ~/Polygenic_Inference/mammals_causative_cCRE2_${set}_mm10.bed | sed 's/-[0-9][0-9]*/1/' | sort -k 1,1 -k2,2n | bedtools intersect -a stdin -b ~/Polygenic_Inference/refSeqGenes_mm10.bed -wa -wb | sort -k 1,1 -k2,2n > ~/Polygenic_Inference/mammals_causative_cCRE2_genes_${set}_mm10.bed
+
+awk -F "\t" 'OFS="\t" {print $1, $2-500000, $3+500000, $4}' ~/Polygenic_Inference/mammals_causative_cCRE2_${set}_bosTau9.bed | sed 's/-[0-9][0-9]*/1/' | sort -k 1,1 -k2,2n | bedtools intersect -a stdin -b ~/Polygenic_Inference/refSeqGenes_bosTau9.bed -wa -wb | sort -k 1,1 -k2,2n > ~/Polygenic_Inference/mammals_causative_cCRE2_genes_${set}_bosTau9.bed
+
+awk -F "\t" 'OFS="\t" {print $1, $2-500000, $3+500000, $4}' ~/Polygenic_Inference/mammals_causative_cCRE2_${set}_macFas5.bed | sed 's/-[0-9][0-9]*/1/' | sort -k 1,1 -k2,2n | bedtools intersect -a stdin -b ~/Polygenic_Inference/refSeqGenes_macFas5.bed -wa -wb | sort -k 1,1 -k2,2n > ~/Polygenic_Inference/mammals_causative_cCRE2_genes_${set}_macFas5.bed
+
+awk -F "\t" 'OFS="\t" {print $1, $2-500000, $3+500000, $4}' ~/Polygenic_Inference/mammals_causative_cCRE2_${set}_canFam6.bed | sed 's/-[0-9][0-9]*/1/' | sort -k 1,1 -k2,2n | bedtools intersect -a stdin -b ~/Polygenic_Inference/refSeqGenes_canFam6.bed -wa -wb | sort -k 1,1 -k2,2n > ~/Polygenic_Inference/mammals_causative_cCRE2_genes_${set}_canFam6.bed
+
+done
+```
+
+## motifbreakR to identify differentially bound TFs
+
+https://www.bioconductor.org/packages/release/bioc/vignettes/motifbreakR/inst/doc/motifbreakR-vignette.html
+
+
+```{r}
+library(tidyverse)
+#to run motifbreakR, I needed to install a whole bunch of other packages
+library(stringr)
+library(TFMPvalue)
+library(matrixStats)
+library(motifbreakR)
+library(SNPlocs.Hsapiens.dbSNP155.GRCh38)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(BSgenome.Mmusculus.UCSC.mm10)
+
+#trait <- "RBC"
+trait <- "BodySize"
+
+cCRE_table <- read.table(paste("~/Polygenic_Inference/PhyloP/mammals_causative_cCRE2_", trait, "_hg38.bed", sep = ""), header = F)
+colnames(cCRE_table) <- c("chr", "start", "end", "rsid", "PhyloP")
+cCRE_table <- cCRE_table %>% arrange(desc(PhyloP)) %>% separate_rows(rsid, sep = ",") %>% as.data.frame()
+
+
+variants <- snps.from.rsid(rsid = cCRE_table$rsid,
+                           dbSNP = SNPlocs.Hsapiens.dbSNP155.GRCh38,
+                           search.genome = BSgenome.Hsapiens.UCSC.hg38)
+#so the standard motifbreakR approach to SNPs includes lots more ALT alleles than we are using in this study so we need to filter down to only the biallelic version
+#to do this, we load in the REF and ALT calls we used:
+mammal_causative <- read.table(paste("~/Polygenic_Inference/mammals_causative_SNPs_df_", trait,".tsv", sep = ""), header = T)
+
+#make a dataframe for easier object manipulations 
+variants_df <- as.data.frame(variants)
+#subset the variants to those with the correct alt allele
+variants_pruned <- variants[which(paste(variants_df$SNP_id, variants_df$ALT, sep = ":") %in% paste(mammal_causative$Row.names, mammal_causative$alt, sep = ":")),]
+#run motifbreakr
+motifbreakr.results <- motifbreakR(snpList = variants_pruned, pwmList = subset(subset(MotifDb, dataSource == "HOCOMOCOv10"), organism == "Hsapiens"), filterp = TRUE, threshold = 1e-4,
+                       method = "ic",
+                       bkg = c(A=0.25, C=0.25, G=0.25, T=0.25),
+                       BPPARAM = BiocParallel::bpparam())
+
+#run motifbreakr
+motifbreakr.results_all <- motifbreakR(snpList = variants_pruned, pwmList = subset(subset(MotifDb, dataSource == "HOCOMOCOv10"), organism == "Hsapiens"), filterp = TRUE, threshold = 1e-4, show.neutral =T,
+                       method = "ic",
+                       bkg = c(A=0.25, C=0.25, G=0.25, T=0.25),
+                       BPPARAM = BiocParallel::bpparam())
+
+#run if pvals needed
+#motifbreakr.results.pvals <- calculatePvalue(motifbreakr.results, granularity = 1e-5)
+
+#now liftover to mouse and create the same matrix
+library(liftOver)
+
+#liftover to test in mouse
+ch = import.chain("~/Polygenic_Inference/hg38ToMm10.over.chain")
+variants_mm10 <- unlist(liftOver(variants_pruned, ch))
+genome(variants_mm10) <- "mm10"
+mouse_DNA <- getSeq(BSgenome.Mmusculus.UCSC.mm10, variants_mm10, as.character=T)
+
+#now I need to write a bed file because non-human SNPs need to be associated with the correct genome information.
+variants_mm10_df <- as.data.frame(variants_mm10)
+#add mouse REF information
+variants_mm10_df$mouse_ref <- mouse_DNA
+variants_mm10_df$mouse_alt <- NA
+
+for (r in 1:nrow(variants_mm10_df)){
+  
+  #test if mouse ref equals human ref
+  if(variants_mm10_df$mouse_ref[r] == variants_mm10_df$REF[r]){
+      variants_mm10_df$mouse_alt[r] <- variants_mm10_df$ALT[r]
+  }
+  #test if mouse ref equals human alt
+  if(variants_mm10_df$mouse_ref[r] == variants_mm10_df$ALT[r]){
+      variants_mm10_df$mouse_alt[r] <- variants_mm10_df$REF[r]
+  }
+  #mouse ref allele is not a human allele
+  if(variants_mm10_df$mouse_ref[r] != variants_mm10_df$REF[r] && variants_mm10_df$mouse_ref[r] != variants_mm10_df$ALT[r]){
+    #add human ref allele as first alternative
+      variants_mm10_df$mouse_alt[r] <- variants_mm10_df$REF[r]
+    #add human alt allele as second alternative (and a new SNP position)
+      variants_mm10_df <- rbind(variants_mm10_df, variants_mm10_df[r,])
+      variants_mm10_df$mouse_alt[nrow(variants_mm10_df)] <- variants_mm10_df$ALT[r]
+  }
+}
+
+#the bed format has to be very specific 
+bed_file <- data.frame(chr = variants_mm10_df$seqnames, start = (variants_mm10_df$start-1), end = variants_mm10_df$end, id = paste(variants_mm10_df$seqnames, variants_mm10_df$start,  variants_mm10_df$mouse_ref, variants_mm10_df$mouse_alt, sep = ":"), v5 = 0, v6 ="+")
+
+mouse_rsid_converter <- data.frame(chr = variants_mm10_df$seqnames, start = (variants_mm10_df$start-1), end = variants_mm10_df$end, id = paste(variants_mm10_df$seqnames, variants_mm10_df$start, variants_mm10_df$mouse_ref, variants_mm10_df$mouse_alt, sep = ":"), v5 = 0, v6 ="+", rsid = variants_mm10_df$SNP_id)
+
+write.table(bed_file, paste("~/Polygenic_Inference/mouse_", trait, "_test.bed", sep = ""), sep = "\t", row.names=FALSE, col.names=FALSE, quote = F)
+
+#this will include the mouse reference allele, even if it's not also a human allele
+mm10_variants <- snps.from.file(
+  file = paste("~/Polygenic_Inference/mouse_", trait, "_test.bed", sep = ""), 
+  search.genome = BSgenome.Mmusculus.UCSC.mm10,
+  format = "bed")
+
+#now add human specific RSID ID and ref/alt alleles
+mm10_variants$human_id <- mouse_rsid_converter$rsid
+
+
+Mouse_variants <- motifbreakR(snpList = mm10_variants, pwmList = subset(subset(MotifDb, dataSource == "HOCOMOCOv10"), organism == "Mmusculus"), filterp = TRUE, threshold = 1e-4,
+                       method = "ic",
+                       bkg = c(A=0.25, C=0.25, G=0.25, T=0.25),
+                       BPPARAM = BiocParallel::bpparam())
+
+
+Mouse_variants_all <- motifbreakR(snpList = mm10_variants, pwmList = subset(subset(MotifDb, dataSource == "HOCOMOCOv10"), organism == "Mmusculus"), filterp = TRUE, threshold = 1e-4, show.neutral =T,
+                       method = "ic",
+                       bkg = c(A=0.25, C=0.25, G=0.25, T=0.25),
+                       BPPARAM = BiocParallel::bpparam())
+#run if pvals needed
+#Mouse_variants_pvals <- calculatePvalue(Mouse_variants, granularity = 1e-5)
+
+cCRE_table$strong_TFs <- NA
+cCRE_table$weak_TFs <- NA
+cCRE_table$all_TFs <- NA
+cCRE_table$strong_TFs_n <- NA
+cCRE_table$weak_TFs_n <- NA
+cCRE_table$all_TFs_n <- NA
+cCRE_table$mouse_TFs <- NA
+cCRE_table$mouse_TFs_n <- NA
+cCRE_table$overlap_TFs <- NA
+cCRE_table$overlap_TFs_n <- NA
+cCRE_table$bound_TFs <- NA
+cCRE_table$mouse_bound_TFs <- NA
+cCRE_table$shared_bound_TFs <- NA
+
+
+#add TF results to SNP df
+for (snp_pos in 1:nrow(cCRE_table)){
+  #identify strong and weak SNPs
+  cCRE_table$strong_TFs[snp_pos] <- paste(unique(motifbreakr.results$geneSymbol[which(motifbreakr.results$SNP_id == cCRE_table$rsid[snp_pos] & motifbreakr.results$effect == "strong")]), collapse = ",")
+  cCRE_table$weak_TFs[snp_pos] <- paste(unique(motifbreakr.results$geneSymbol[which(motifbreakr.results$SNP_id == cCRE_table$rsid[snp_pos] & motifbreakr.results$effect == "weak")]), collapse = ",")
+  cCRE_table$all_TFs[snp_pos] <- paste(unique(motifbreakr.results$geneSymbol[which(motifbreakr.results$SNP_id == cCRE_table$rsid[snp_pos])]), collapse = ",")
+  cCRE_table$strong_TFs_n[snp_pos] <- length(unique(motifbreakr.results$geneSymbol[which(motifbreakr.results$SNP_id == cCRE_table$rsid[snp_pos] & motifbreakr.results$effect == "strong")]))
+  cCRE_table$weak_TFs_n[snp_pos] <- length(unique(motifbreakr.results$geneSymbol[which(motifbreakr.results$SNP_id == cCRE_table$rsid[snp_pos] & motifbreakr.results$effect == "weak")]))
+  cCRE_table$all_TFs_n[snp_pos]  <- length(unique(motifbreakr.results$geneSymbol[which(motifbreakr.results$SNP_id == cCRE_table$rsid[snp_pos])]))
+  cCRE_table$mouse_TFs[snp_pos] <- paste(unique(Mouse_variants$geneSymbol[which(Mouse_variants$human_id == cCRE_table$rsid[snp_pos])]), collapse = ",")
+  cCRE_table$mouse_TFs_n[snp_pos] <- length(unique(Mouse_variants$geneSymbol[which(Mouse_variants$human_id == cCRE_table$rsid[snp_pos])]))
+  cCRE_table$overlap_TFs[snp_pos] <- paste(intersect(unique(Mouse_variants$geneSymbol[which(Mouse_variants$human_id == cCRE_table$rsid[snp_pos])]), unique(motifbreakr.results$geneSymbol[which(motifbreakr.results$SNP_id == cCRE_table$rsid[snp_pos])])), collapse = ",")
+  cCRE_table$overlap_TFs_n[snp_pos] <- length(intersect(unique(Mouse_variants$geneSymbol[which(Mouse_variants$human_id == cCRE_table$rsid[snp_pos])]), unique(motifbreakr.results$geneSymbol[which(motifbreakr.results$SNP_id == cCRE_table$rsid[snp_pos])])))
+  cCRE_table$bound_TFs[snp_pos] <- paste(unique(motifbreakr.results_all$geneSymbol[which(motifbreakr.results_all$SNP_id == cCRE_table$rsid[snp_pos])]), collapse = ",")
+  cCRE_table$mouse_bound_TFs[snp_pos] <- paste(unique(Mouse_variants_all$geneSymbol[which(Mouse_variants_all$human_id == cCRE_table$rsid[snp_pos])]), collapse = ",")
+   cCRE_table$shared_bound_TFs[snp_pos] <- paste(intersect(unique(motifbreakr.results_all$geneSymbol[which(motifbreakr.results_all$SNP_id == cCRE_table$rsid[snp_pos])]), unique(Mouse_variants_all$geneSymbol[which(Mouse_variants_all$human_id == cCRE_table$rsid[snp_pos])])), collapse = ",")
+}
+cCRE_table
+
+write.table(cCRE_table, paste("~/Polygenic_Inference/cCRE_table", trait, ".txt", sep = ""), sep = "\t", row.names=FALSE, col.names=T, quote = F)
+```
+
+##ANALYZE BEST CANDIDATES IN R
+
+## calculate and plot PhyloP
+```{r}
+library(tidyverse)
+
+traits_abrev <- c("AlaAmino", "AspAmino", "Calcium", "Creatinine", "Eosinophil", "Hemoglobin", "Lymphocyte", "RBC", "BodySize", "Urea", "WBC")
+
+#wilcoxon test for phylop
+for (i in 9){
+    #check if blood
+  if(i ==8){
+  cCRE_all_TSS <- as.numeric(system("sort -k 1,1 -k2,2n ~/Polygenic_Inference/VISION_RBC_cCRE_human_mouse_shared.bed | bedtools closest -a stdin -b ~/Polygenic_Inference/refTSS_v4.1_human_coordinate.hg38_clean.bed -d | awk '{print $11 }'", intern = T))
+  cCRE_all_phyloP <- as.numeric(system("sort -k 1,1 -k2,2n ~/Polygenic_Inference/VISION_RBC_cCRE_human_mouse_shared.bed | bedtools closest -a stdin -b ~/Polygenic_Inference/PhyloP/VISION_RBC_cCRE_human_mouse_shared.bed -d | awk '{print $9 }'", intern = T))
+  }else{
+    cCRE_all_TSS <- as.numeric(system("sort -k 1,1 -k2,2n ~/Polygenic_Inference/ENCODE_cCRE_human_mouse_shared.bed | bedtools closest -a stdin -b ~/Polygenic_Inference/refTSS_v4.1_human_coordinate.hg38_clean.bed -d | awk '{print $13 }'", intern = T))
+    cCRE_all_phyloP <- as.numeric(system("sort -k 1,1 -k2,2n ~/Polygenic_Inference/VISION_RBC_cCRE_human_mouse_shared.bed | bedtools closest -a stdin -b ~/Polygenic_Inference/PhyloP/ENCODE_cCRE_human_mouse_shared.bed -d | awk '{print $9 }'", intern = T))
+  }
+  
+  #for all causative SNP positions
+  cCRE_phyloP <- as.numeric(system(paste(" awk '{print $5}' ~/Polygenic_Inference/PhyloP/mammals_causative_cCRE2_", traits_abrev[i], "_hg38.bed", sep = ""), intern = T))
+  NOTcCRE_phyloP <- as.numeric(system(paste(" awk '{print $5}' ~/Polygenic_Inference/PhyloP/mammals_causative_NOTcCRE2_", traits_abrev[i], "_hg38.bed", sep = ""), intern = T))
+  
+  
+  print(traits_abrev[i])
+  print(wilcox.test(cCRE_phyloP, NOTcCRE_phyloP, exact= FALSE, alternative = "greater"))
+  wilcox_corr <- wilcox.test(cCRE_phyloP, NOTcCRE_phyloP, exact= FALSE, alternative = "greater")
+  #make df to plot
+  cCRE_plotting_df_phyloP <- data.frame(PhyloP = c(cCRE_phyloP, NOTcCRE_phyloP), type = c(rep("Conserved cCRE", length(cCRE_phyloP)), rep("Not conserved cCRE", length(NOTcCRE_phyloP))))
+  
+  ggplot(cCRE_plotting_df_phyloP, aes(x = type, y = PhyloP)) + geom_boxplot(fill = "gray") + labs(title = traits_abrev[i], y = "PhyloP") + 
+  theme_bw() +
+  theme(axis.line = element_line(colour = "black"), axis.title=element_text(size=6), axis.text=element_text(size=6), panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), axis.title.x=element_blank())+
+  annotate(geom="text", x=1.5, y=6.5, label=paste("Wilcoxon-rank sum, p < ", signif(wilcox_corr$p.value, digits = 3), sep = ""),
+           color="black", size = 2)
+  
+#wilcoxon test for reduced TSS distance
+  #for all causative SNP positions
+  cCRE <- as.numeric(system(paste("sort -k 1,1 -k2,2n ~/Polygenic_Inference/mammals_causative_cCRE2_", traits_abrev[i], "_hg38.bed | bedtools closest -a stdin -b ~/Polygenic_Inference/refTSS_v4.1_human_coordinate.hg38_clean.bed -d| awk '{print $11 }'", sep = ""), intern = T))
+  NOTcCRE <- as.numeric(system(paste("sort -k 1,1 -k2,2n ~/Polygenic_Inference/mammals_causative_NOTcCRE2_", traits_abrev[i], "_hg38.bed | bedtools closest -a stdin -b ~/Polygenic_Inference/refTSS_v4.1_human_coordinate.hg38_clean.bed -d| awk '{print $11 }'", sep = ""), intern = T))
+  print(traits_abrev[i])
+  print(wilcox.test(cCRE, NOTcCRE, exact= FALSE, alternative = "less"))
+  print(wilcox.test(cCRE, cCRE_TSS, exact= FALSE, alternative = "less"))
+  wilcox_corr_TSS <- wilcox.test(cCRE, NOTcCRE, exact= FALSE, alternative = "less")
+  #make df to plot
+  cCRE_plotting_df <- data.frame(distance = c(cCRE, NOTcCRE, cCRE_all_TSS), type = c(rep("Conserved cCRE", length(cCRE)), rep("Not conserved cCRE", length(NOTcCRE)), rep("All cCRE", length(cCRE_all_TSS))))
+#generate plot
+  ggplot(cCRE_plotting_df, aes(x = type, y = distance)) + geom_boxplot(fill = "gray") + labs(title = traits_abrev[i], y = "Distance to TSS") + 
+  theme_bw() +
+  theme(axis.line = element_line(colour = "black"), axis.title=element_text(size=6), axis.text=element_text(size=6), panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), axis.title.x=element_blank())+
+  annotate(geom="text", x=1.5, y=max(NOTcCRE) + 500, label=paste("Wilcoxon-rank sum, p < ", signif(wilcox_corr_TSS$p.value, digits = 3), sep = ""),
+           color="black", size = 2)
+}
+
+```
+
+#Identify overlaps with cis-eQTL datasets
+
+```{r}
+library(data.table) #to load in the large eQTL data file
+
+#show more columns in dplyr
+options(dplyr.width = Inf)
+
+traits_abrev <- c("AlaAmino", "AspAmino", "Calcium", "Creatinine", "Eosinophil", "Hemoglobin", "Lymphocyte", "RBC", "BodySize", "Urea", "WBC")
+
+
+for (i in 9){
+  SNP_genes <- read.delim(paste("~/Polygenic_Inference/mammals_causative_cCRE2_genes_", traits_abrev[i], "_hg38.bed", sep =""), header = FALSE)
+  colnames(SNP_genes) <- c("chr", "start", "end", "rsid", "gene_chr", "gene_start", "gene_end", "gene_id")
+  SNP_genes_cleaned <- SNP_genes %>% group_by(rsid) %>% mutate(gene_id_list = paste(gene_id, collapse = ",", sep = "")) %>% dplyr::select(rsid, gene_id_list) %>% distinct(rsid, gene_id_list) %>% mutate(gene_n = str_count(string = gene_id_list, pattern = ",")+1)
+  #load mouse genes
+  SNP_genes_mouse <- read.delim(paste("~/Polygenic_Inference/mammals_causative_cCRE2_genes_", traits_abrev[i], "_mm10.bed", sep =""), header = FALSE)
+  colnames(SNP_genes_mouse) <- c("chr", "start", "end", "rsid", "gene_chr", "gene_start", "gene_end", "gene_id")
+  SNP_genes_mouse_cleaned <- SNP_genes_mouse %>% group_by(rsid) %>% mutate(mouse_gene_id_list = paste(gene_id, collapse = ",", sep = "")) %>% dplyr::select(rsid, mouse_gene_id_list) %>% distinct(rsid, mouse_gene_id_list) %>% mutate(mouse_gene_n = str_count(string = mouse_gene_id_list, pattern = ",")+1)
+  #load macaque genes
+  SNP_genes_macFas <- read.delim(paste("~/Polygenic_Inference/mammals_causative_cCRE2_genes_", traits_abrev[i], "_macFas5.bed", sep =""), header = FALSE)
+  colnames(SNP_genes_macFas) <- c("chr", "start", "end", "rsid", "gene_chr", "gene_start", "gene_end", "gene_id")
+  SNP_genes_macaque_cleaned <- SNP_genes_macFas %>% group_by(rsid) %>% mutate(macaque_gene_id_list = paste(gene_id, collapse = ",", sep = "")) %>% dplyr::select(rsid, macaque_gene_id_list) %>% distinct(rsid, macaque_gene_id_list) %>% mutate(macaque_gene_n = str_count(string = macaque_gene_id_list, pattern = ",")+1)
+  
+  #load dog genes
+  SNP_genes_dog <- read.delim(paste("~/Polygenic_Inference/mammals_causative_cCRE2_genes_", traits_abrev[i], "_canFam6.bed", sep =""), header = FALSE)
+  colnames(SNP_genes_dog) <- c("chr", "start", "end", "rsid", "gene_chr", "gene_start", "gene_end", "gene_id")
+  SNP_genes_dog_cleaned <- SNP_genes_dog %>% group_by(rsid) %>% mutate(dog_gene_id_list = paste(gene_id, collapse = ",", sep = "")) %>% dplyr::select(rsid, dog_gene_id_list) %>% distinct(rsid, dog_gene_id_list) %>% mutate(dog_gene_n = str_count(string = dog_gene_id_list, pattern = ",") + 1)
+  
+  #load cow genes
+  SNP_genes_cow <- read.delim(paste("~/Polygenic_Inference/mammals_causative_cCRE2_genes_", traits_abrev[i], "_bosTau9.bed", sep =""), header = FALSE)
+  colnames(SNP_genes_cow) <- c("chr", "start", "end", "rsid", "gene_chr", "gene_start", "gene_end", "gene_id")
+  SNP_genes_cow_cleaned <- SNP_genes_cow %>% group_by(rsid) %>% mutate(cow_gene_id_list = paste(gene_id, collapse = ",", sep = "")) %>% dplyr::select(rsid, cow_gene_id_list) %>% distinct(rsid, cow_gene_id_list) %>% mutate(cow_gene_n = str_count(string = cow_gene_id_list, pattern = ",")+1)
+  
+  SNP_merged <- SNP_genes_cleaned %>%  dplyr::left_join(SNP_genes_mouse_cleaned, by = "rsid") %>%  dplyr::left_join(SNP_genes_macaque_cleaned, by = "rsid") %>%  dplyr::left_join(SNP_genes_cow_cleaned, by = "rsid") %>%  dplyr::left_join(SNP_genes_dog_cleaned, by = "rsid")
+  SNP_merged$shared_genes <- NA
+  SNP_merged$shared_genes_n <- NA
+  
+  #get genes nearby in human and mouse
+  for ( x in 1:nrow(SNP_merged)){
+    
+    hs_genes <- toupper(unlist(strsplit(SNP_merged$gene_id_list[x], ",")))
+    mm_genes <- toupper(unlist(strsplit(SNP_merged$mouse_gene_id_list[x], ",")))
+    canfam_genes <- toupper(unlist(strsplit(SNP_merged$dog_gene_id_list[x], ",")))
+    bostau_genes <- toupper(unlist(strsplit(SNP_merged$cow_gene_id_list[x], ",")))
+    macfas_genes <- toupper(unlist(strsplit(SNP_merged$macaque_gene_id_list[x], ",")))
+    shared_genes <- Reduce(intersect, list(hs_genes, mm_genes,canfam_genes, bostau_genes, macfas_genes))
+    SNP_merged$shared_genes[x] <- paste(shared_genes, collapse = ",")
+    SNP_merged$shared_genes_n[x] <- length(shared_genes)
+    #number of unique genes effected
+    length(unique(unlist(strsplit(SNP_merged$shared_genes, ","))))
+    
+    #lapply(unique(unlist(strsplit(SNP_merged$shared_genes, ","))), write, "genes.txt", append=TRUE, ncolumns=2229)
+    #line below prints a text file with a list item per line 
+    # lapply(unique(unlist(strsplit(SNP_merged$shared_genes, ","))), write, "genes.txt", append=TRUE, ncolumns=2229)
+  }
+  PhyloP <- read.delim(paste("~/Polygenic_Inference/cCRE_table", trait, ".txt", sep = ""), header = T) 
+  #%>% dplyr::select(chr, start, end, rsid, PhyloP)
+
+
+  colnames(PhyloP)[1:5] <- c("chr", "start", "end", "rsid", "PhyloP")
+  SNP_merged2 <- PhyloP %>%  dplyr::left_join(SNP_merged, by = "rsid") %>% arrange(-PhyloP)
+  
+  #add cis-eQTL data to
+  eQTL_data <- fread("~/Polygenic_Inference/2019-12-11-cis-eQTLsFDR0.05-ProbeLevel-CohortInfoRemoved-BonferroniAdded.txt")
+  
+  SNP_merged2$cis_eQTLs <- NA
+  SNP_merged2$cis_eQTLs_shared_overlap <- NA
+  SNP_merged2$cis_eQTLs_shared_overlap_n <- 0
+  #add 
+  for (s in 1:nrow(SNP_merged2)){
+    eQTLS <- eQTL_data$GeneSymbol[which(eQTL_data$SNP == SNP_merged2$rsid[s])]
+    SNP_merged2$cis_eQTLs[s] <- paste(eQTLS, collapse = ",")
+    eQTLS_overlap <- intersect(unlist(strsplit(SNP_merged2$shared_genes[s], ",")), eQTLS)
+    if(length(eQTLS_overlap) >0 ){
+    SNP_merged2$cis_eQTLs_shared_overlap[s] <- paste(eQTLS_overlap, collapse = ",")
+    SNP_merged2$cis_eQTLs_shared_overlap_n[s] <- length(eQTLS_overlap)
+  }
+  } #end for loop over SNPs
+  length(which(SNP_merged2$cis_eQTLs_shared_overlap_n > 0))
+  
+  median(SNP_merged2$cis_eQTLs_shared_overlap_n, na.rm = T)
+}
+
+superdf <- SNP_merged2 %>% arrange(-PhyloP)
+superdf_reduced <- superdf %>% left_join(y = mammal_causative, by = join_by(rsid == Row.names)) %>% mutate(trait =trait, position = paste(chr.x, end, sep = ":"), Alleles = paste(ref, alt, sep = "/"), wilcox_pval_s = signif(wilcox_pval, 3)) %>% dplyr::select(trait, rsid, position, Alleles, beta, wilcox_pval_s, PhyloP, consequence, shared_genes, cis_eQTLs, shared_bound_TFs, overlap_TFs)
+
+superdf_reduced$beta[which(superdf_reduced$beta > 0)] <- "Increasing"
+superdf_reduced$beta[which(superdf_reduced$beta < 0)] <- "Decreasing"
+
+colnames(superdf_reduced) <- c("Trait", "RSID", "Position (hg38)", "Alleles", "Alt Effect on Trait",
+                               "Wilcoxon P-Value", 
+                               "PhyloP", 
+                               "Variant Type", "Syntenic Genes", "cis-eQTLs", "TF Motifs", 
+                               "Human/Mouse Disrupted TFs"
+                               )
+#save results as excel file
+library(xlsx)
+#write.xlsx(
+#  x = superdf_reduced,
+#  file = paste("~/Polygenic_Inference/supplementary_causative_", trait, ".xlsx", sep = ""),
+#  sheetName = trait,
+#  col.names = TRUE,
+#  row.names = FALSE)
+
+mammal_causative_reduced <- mammal_causative[, c(12, 37:284)] %>%  dplyr::select(-alt_effect)
+colnames(mammal_causative_reduced)[1] <- "RSID"
+superdf_reduced2 <- merge(superdf_reduced, mammal_causative_reduced, by = "RSID")
+
+write.xlsx(
+  x = superdf_reduced2,
+  file = paste("~/Polygenic_Inference/supplementary_causative_", trait, ".xlsx", sep = ""),
+  sheetName = trait,
+  col.names = TRUE,
+  row.names = FALSE)
+
+```
+
+#make pie chart showing where causative SNPs fall
+```{r}
+#install packages
+library(tidyverse)
+library(readxl)
+library(ggpubr)
+
+#load causative data
+BodySizeCausative <- read_excel("~/Desktop/supplementary_causative_BodySize.xlsx")
+RBCCausative <- read_excel("~/Desktop/supplementary_causative_RBC.xlsx")
+
+
+BodySizeTable <- as.data.frame(table(BodySizeCausative$`Variant Type`))
+BodySizeTable <- BodySizeTable %>% 
+  arrange(desc(Var1)) %>%
+  mutate(prop = Freq / sum(BodySizeTable$Freq) *100) %>%
+  mutate(ypos = cumsum(prop)- 0.5*prop )
+colnames(BodySizeTable) <- c("Variant Type", "Freq")
+
+RBCTable <- as.data.frame(table(RBCCausative$`Variant Type`))
+RBCTable <- RBCTable %>% 
+  arrange(desc(Var1)) %>%
+  mutate(prop = Freq / sum(BodySizeTable$Freq) *100) %>%
+  mutate(ypos = cumsum(prop)- 0.5*prop )
+colnames(RBCTable) <- c("Variant Type", "Freq")
+
+#plot results as pie charts
+BodySizePie <- ggplot(BodySizeTable, aes(x="", y=Freq, fill=`Variant Type`))  +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  theme_void() +
+  theme( 
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        text = element_text(family = "Arial"),
+        legend.text = element_text(size = 6)) + 
+  geom_text(aes(y = 0.5, x = 0.5, label = "Body Size \n n = 323"), color = "black", size=6) +  scale_fill_brewer(palette="Set3")
+  
+
+RBCPie <- ggplot(RBCTable, aes(x="", y=Freq, fill=`Variant Type`)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  theme_void() +
+  theme(
+        panel.border = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), 
+        text = element_text(family = "Arial"),
+        legend.text = element_text(size = 6)) + 
+  geom_text(aes(y = 0.5, x = 0.5, label = "RBC \n n = 9"), color = "black", size=6) +  scale_fill_brewer(palette="Set3")
+
+
+PieFigure <- ggarrange(BodySizePie, RBCPie, nrow = 2, ncol = 1, common.legend = T, labels = "AUTO", legend = "right")
+#save plot
+ggsave(filename = "Pie_Chart_Figure.png", device = "png", plot = PieFigure, path = "~/Desktop", width = 11, height = 11, units = "cm", dpi = 1200)
+
+ggsave(filename = "Pie_Chart_Figure.tiff", device = "tiff", plot = PieFigure, path = "~/Desktop", width = 11, height = 11, units = "cm", dpi = 1200)
+```
+
