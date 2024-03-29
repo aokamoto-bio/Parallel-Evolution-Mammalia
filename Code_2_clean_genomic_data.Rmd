@@ -365,6 +365,70 @@ SNP_df_primates_phylo_cleaned <- SNP_df_primates_cleaned %>% filter(monophyletic
 write_tsv(x = SNP_df_primates_phylo_cleaned, file = "SNP_df_primates_phylo_cleaned.tsv")
 '''
 
+## Extract Monophyletic SNPs
 
+library(phytools)
+
+#load in SNP data 
+SNP_df_mammal_cleaned <- fread('SNP_df_mammal_cons.tsv')
+
+#coerce to data.frame
+SNP_df_mammal_cleaned <- as.data.frame(SNP_df_mammal_cleaned)
+
+#load species tree
+AllSpeciesTree <- read.tree("species_tree.nwk")
+#modify tips to match Zoonomia data
+AllSpeciesTree$tip.label[AllSpeciesTree$tip.label == "Plecturocebus_donacophilus"] <- "Callicebus_donacophilus"
+AllSpeciesTree$tip.label[AllSpeciesTree$tip.label == "Monachus_schauinslandi"] <- "Neomonachus_schauinslandi"
+
+#remove species from tree with no phenotypic data available
+FilteredTree <- drop.tip(AllSpeciesTree, "Homo_sapiens")
+
+#get internal node numeric IDs
+internal_nodes <- (length(FilteredTree$tip.label) + 2):length(FilteredTree$edge.length)
+
+#create a variable to store monophyletic node ID if any
+SNP_df_mammal_cleaned$monophyletic_node <- NA
+SNP_df_mammal_cleaned$IDs <- 1:nrow(SNP_df_mammal_cleaned)
+
+#iterate over internal nodes in tree
+for (n in internal_nodes){
+  #get clade1
+  clade1 <- FilteredTree$tip.label[getDescendants(FilteredTree, node = n)[getDescendants(FilteredTree, node = n) <= length(FilteredTree$tip.label)]]
+  clade2 <- setdiff(FilteredTree$tip.label, clade1)
+  #create variable to store lengths of positions
+  monophyletic_positions <- seq(1:nrow(SNP_df_mammal_cleaned))
+  
+  #check if there are more than one species in Clade 1
+  if(length(clade1) > 1){
+    #find positions that have the same bp between consecutive pairs of species in clade 1
+    for (s in 1:(length(clade1) - 1)){
+      matched_positions <- which(SNP_df_mammal_cleaned[clade1[s]]==SNP_df_mammal_cleaned[clade1[s + 1]])
+      monophyletic_positions <- intersect(monophyletic_positions, matched_positions)
+    }
+    #create smaller dataframe based on the first clade results to speed things up
+    SNP_df_mammal_cleaned_reduced <- SNP_df_mammal_cleaned[monophyletic_positions, ]
+    monophyletic_positions_reduced <- seq(1:nrow(SNP_df_mammal_cleaned_reduced))
+    for (t in 1:length(clade2)){
+      matched_positions_reduced <- which(SNP_df_mammal_cleaned_reduced[clade2[t]] != SNP_df_mammal_cleaned_reduced[clade1[1]])
+      monophyletic_positions <- intersect(monophyletic_positions, SNP_df_mammal_cleaned_reduced$IDs[matched_positions_reduced])
+      
+    }
+    print(length(monophyletic_positions))
+    if(length(monophyletic_positions) > 0){
+      SNP_df_mammal_cleaned$monophyletic_node[monophyletic_positions] <- n
+    }
+  }
+  
+}
+table(SNP_df_mammal_cleaned$monophyletic_node)
+
+plot(tree,no.margin=TRUE,edge.width=2,cex=0.7)
+nodelabels(text=1:tree$Nnode,node=1:tree$Nnode+Ntip(tree))
+
+SNP_df_mammal_monophyletic <- SNP_df_mammal_cleaned[which(SNP_df_mammal_cleaned$monophyletic_node > 0), ]
+
+#write results for easy loading
+write.table(SNP_df_mammal_monophyletic, file = "SNP_df_mammal_monophyletic.tsv", row.names=FALSE, sep="\t")
 
 
